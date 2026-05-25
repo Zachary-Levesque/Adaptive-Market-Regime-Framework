@@ -23,6 +23,7 @@ data:
   end_date: "2024-12-31"
   benchmark: "SPY"
   cache_dir: "data/raw"
+  processed_dir: "data/processed"
 
 regime:
   n_regimes: 4
