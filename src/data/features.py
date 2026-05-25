@@ -13,7 +13,7 @@ class FeatureEngineer:
 
     TECHNICAL_WINDOWS = (1, 5, 21, 63)
 
-    def compute_technical_features(self, prices: pd.DataFrame) -> pd.DataFrame:
+    def compute_technical_features(self, prices: pd.DataFrame, vix: pd.Series | None = None) -> pd.DataFrame:
         """Compute asset-level technical features from OHLCV prices."""
         close = self._extract_field(prices, ("Adj Close", "Close"))
         volume = self._extract_field(prices, ("Volume",))
@@ -47,10 +47,14 @@ class FeatureEngineer:
         technical = pd.DataFrame(features, index=close.index)
         technical.columns = pd.MultiIndex.from_tuples(technical.columns, names=["ticker", "feature"])
 
-        if vix_ticker is not None:
-            vix = close[vix_ticker]
-            technical[("MARKET", "vix_level")] = vix
-            technical[("MARKET", "vix_5d_change")] = vix.pct_change(5)
+        vix_series = vix
+        if vix_series is None and vix_ticker is not None:
+            vix_series = close[vix_ticker]
+
+        if vix_series is not None:
+            vix_series = vix_series.reindex(close.index)
+            technical[("MARKET", "vix_level")] = vix_series
+            technical[("MARKET", "vix_5d_change")] = vix_series.pct_change(5)
 
         return technical.sort_index(axis=1)
 
