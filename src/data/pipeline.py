@@ -50,6 +50,7 @@ class DataPipeline:
         self.ingester = ingester or MarketDataIngester(
             cache_dir=config.cache_dir,
             local_data_dir=config.local_data_dir,
+            allow_remote_downloads=config.allow_remote_downloads,
         )
         self.factor_loader = factor_loader or FactorLoader()
         self.feature_engineer = feature_engineer or FeatureEngineer()
