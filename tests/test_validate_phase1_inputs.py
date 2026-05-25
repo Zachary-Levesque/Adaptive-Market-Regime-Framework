@@ -28,6 +28,7 @@ def test_validate_phase1_inputs_runs_with_local_files(tmp_path: Path, monkeypatc
                 f"  cache_dir: '{raw_dir}'",
                 "  processed_dir: 'data/processed'",
                 f"  local_data_dir: '{raw_dir}'",
+                "  allow_remote_downloads: false",
             ]
         ),
         encoding="utf-8",
