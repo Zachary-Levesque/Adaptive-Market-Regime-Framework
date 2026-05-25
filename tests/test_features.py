@@ -32,6 +32,17 @@ def test_compute_technical_features_creates_expected_columns():
     assert ("MARKET", "vix_level") in features.columns
 
 
+def test_compute_technical_features_accepts_external_vix_series():
+    engineer = FeatureEngineer()
+    prices = _price_frame().drop(columns="^VIX", level="ticker")
+    vix = pd.Series(np.linspace(18, 24, len(prices.index)), index=prices.index)
+
+    features = engineer.compute_technical_features(prices, vix=vix)
+
+    assert ("MARKET", "vix_level") in features.columns
+    assert np.isclose(features[("MARKET", "vix_level")].dropna().iloc[0], 18.0)
+
+
 def test_normalize_clips_cross_sectionally():
     engineer = FeatureEngineer()
     columns = pd.MultiIndex.from_tuples(
