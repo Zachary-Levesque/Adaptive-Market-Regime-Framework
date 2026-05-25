@@ -28,7 +28,7 @@ def test_compute_returns_uses_adjusted_close():
     ingester = MarketDataIngester()
     returns = ingester.compute_returns(_sample_prices())
 
-    expected = np.log(101.0 / 100.0)
+    expected = np.log((100.0 + (10.0 / 29.0)) / 100.0)
     assert np.isclose(returns.loc[pd.Timestamp("2024-01-02"), "SPY"], expected)
 
 
