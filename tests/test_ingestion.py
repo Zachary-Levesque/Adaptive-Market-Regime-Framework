@@ -91,3 +91,47 @@ def test_fetch_stooq_csv_parses_valid_csv(monkeypatch):
 
     assert not frame.empty
     assert list(frame.columns) == ["Open", "High", "Low", "Close", "Volume"]
+
+
+def test_load_local_price_frames_finds_stooq_style_txt(tmp_path: Path):
+    raw_dir = tmp_path / "raw" / "stooq" / "us" / "nasdaq stocks" / "1"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "aapl.us.txt").write_text(
+        "\n".join(
+            [
+                "Date,Open,High,Low,Close,Volume",
+                "2024-01-02,100,101,99,100.5,1000",
+                "2024-01-03,101,102,100,101.5,1100",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    ingester = MarketDataIngester(local_data_dir=tmp_path / "raw")
+    frames, missing = ingester._load_local_price_frames(["AAPL"], "2024-01-01", "2024-01-31")
+
+    assert missing == []
+    assert len(frames) == 1
+    assert ("AAPL", "Adj Close") in frames[0].columns
+
+
+def test_inspect_local_data_reports_found_and_missing(tmp_path: Path):
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    (raw_dir / "spy.csv").write_text(
+        "\n".join(
+            [
+                "Date,Open,High,Low,Close,Volume",
+                "2024-01-02,100,101,99,100.5,1000",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    ingester = MarketDataIngester(local_data_dir=raw_dir)
+    statuses = ingester.inspect_local_data(["SPY", "QQQ"])
+
+    assert statuses[0].ticker == "SPY"
+    assert statuses[0].found is True
+    assert statuses[1].ticker == "QQQ"
+    assert statuses[1].found is False
