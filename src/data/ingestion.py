@@ -36,6 +36,7 @@ class MarketDataIngester:
         max_missing_fraction: float = 0.10,
         cache_dir: str | Path | None = None,
         local_data_dir: str | Path | None = None,
+        allow_remote_downloads: bool = False,
         retry_attempts: int = 3,
         retry_delay_seconds: float = 2.0,
     ):
@@ -43,6 +44,7 @@ class MarketDataIngester:
         self.max_missing_fraction = max_missing_fraction
         self.cache_dir = Path(cache_dir) if cache_dir else None
         self.local_data_dir = Path(local_data_dir) if local_data_dir else None
+        self.allow_remote_downloads = allow_remote_downloads
         self.retry_attempts = retry_attempts
         self.retry_delay_seconds = retry_delay_seconds
 
@@ -68,9 +70,6 @@ class MarketDataIngester:
         interval: str = "1d",
     ) -> pd.DataFrame:
         """Download OHLCV data as a ticker-first MultiIndex DataFrame."""
-        if yf is None:
-            raise ImportError("yfinance is required for download_prices(). Install dependencies first.")
-
         requested_tickers = list(dict.fromkeys(tickers))
         cached = self._load_cached_prices(requested_tickers, start, end, interval)
         if cached is not None:
@@ -86,19 +85,31 @@ class MarketDataIngester:
             return prices
 
         frames = list(local_frames)
-        if missing_tickers:
+        if missing_tickers and self.allow_remote_downloads:
             logger.info(
                 "Missing {} tickers locally; attempting remote download for the remainder",
                 len(missing_tickers),
             )
-        remote_frames = self._download_in_batches(missing_tickers or requested_tickers, start, end, interval)
-        frames.extend(remote_frames)
+        if missing_tickers and self.allow_remote_downloads:
+            if yf is None:
+                raise ImportError(
+                    "Remote downloads are enabled but yfinance is not installed. "
+                    "Install Phase 1 dependencies or disable remote downloads."
+                )
+            remote_frames = self._download_in_batches(missing_tickers, start, end, interval)
+            frames.extend(remote_frames)
 
-        if not frames:
-            local_hint = self._format_local_data_hint(requested_tickers)
+        unresolved = self._missing_from_frames(requested_tickers, frames)
+        if not frames or unresolved:
+            local_hint = self._format_local_data_hint(unresolved or requested_tickers)
+            remote_hint = (
+                "Remote downloads are disabled in configs/config.yaml (`data.allow_remote_downloads: false`)."
+                if not self.allow_remote_downloads
+                else "Remote providers were attempted but did not return usable data."
+            )
             raise ValueError(
-                "No price data could be loaded. Remote providers failed, and no local raw files were found in "
-                f"{self.local_data_dir or 'the configured raw-data directory'}. {local_hint}"
+                f"Price ingestion incomplete. Unresolved tickers: {', '.join(unresolved or requested_tickers)}. "
+                f"{remote_hint} Local raw-data directory: {self.local_data_dir or 'not configured'}. {local_hint}"
             )
 
         prices = pd.concat(frames, axis=1).sort_index(axis=1)
@@ -359,6 +370,18 @@ class MarketDataIngester:
             "Expected local files with a Date column under the raw-data directory, for example: "
             f"{sample_text}."
         )
+
+    @staticmethod
+    def _missing_from_frames(requested_tickers: list[str], frames: list[pd.DataFrame]) -> list[str]:
+        if not frames:
+            return requested_tickers
+
+        resolved = set()
+        for frame in frames:
+            if isinstance(frame.columns, pd.MultiIndex):
+                resolved.update(frame.columns.get_level_values(0).unique())
+
+        return [ticker for ticker in requested_tickers if ticker not in resolved]
 
     def _find_local_price_file(self, ticker: str) -> Path | None:
         if self.local_data_dir is None:
