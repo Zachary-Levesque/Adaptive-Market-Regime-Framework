@@ -33,7 +33,7 @@ class MarketDataIngester:
     def __init__(
         self,
         max_forward_fill: int = 5,
-        max_missing_fraction: float = 0.10,
+        max_missing_fraction: float = 0.25,
         cache_dir: str | Path | None = None,
         local_data_dir: str | Path | None = None,
         allow_remote_downloads: bool = False,
