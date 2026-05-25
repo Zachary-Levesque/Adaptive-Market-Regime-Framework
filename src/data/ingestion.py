@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from io import StringIO
 import time
+from dataclasses import dataclass
 from typing import Iterable
 
 import numpy as np
@@ -34,14 +35,30 @@ class MarketDataIngester:
         max_forward_fill: int = 5,
         max_missing_fraction: float = 0.10,
         cache_dir: str | Path | None = None,
+        local_data_dir: str | Path | None = None,
         retry_attempts: int = 3,
         retry_delay_seconds: float = 2.0,
     ):
         self.max_forward_fill = max_forward_fill
         self.max_missing_fraction = max_missing_fraction
         self.cache_dir = Path(cache_dir) if cache_dir else None
+        self.local_data_dir = Path(local_data_dir) if local_data_dir else None
         self.retry_attempts = retry_attempts
         self.retry_delay_seconds = retry_delay_seconds
+
+    @dataclass(frozen=True)
+    class LocalTickerStatus:
+        ticker: str
+        found: bool
+        path: Path | None
+
+    def inspect_local_data(self, tickers: Iterable[str]) -> list[LocalTickerStatus]:
+        """Report which tickers can be resolved from the local raw-data directory."""
+        statuses: list[MarketDataIngester.LocalTickerStatus] = []
+        for ticker in list(dict.fromkeys(tickers)):
+            path = self._find_local_price_file(ticker)
+            statuses.append(self.LocalTickerStatus(ticker=ticker, found=path is not None, path=path))
+        return statuses
 
     def download_prices(
         self,
@@ -60,10 +77,29 @@ class MarketDataIngester:
             logger.info("Loaded cached price history for {} tickers", len(cached.columns.levels[0]))
             return cached
 
-        frames = self._download_in_batches(requested_tickers, start, end, interval)
+        local_frames, missing_tickers = self._load_local_price_frames(requested_tickers, start, end)
+        if local_frames and not missing_tickers:
+            prices = pd.concat(local_frames, axis=1).sort_index(axis=1)
+            prices.index = pd.to_datetime(prices.index).tz_localize(None)
+            logger.info("Loaded local price history for {} tickers", len(prices.columns.levels[0]))
+            self._save_cached_prices(prices, requested_tickers, start, end, interval)
+            return prices
+
+        frames = list(local_frames)
+        if missing_tickers:
+            logger.info(
+                "Missing {} tickers locally; attempting remote download for the remainder",
+                len(missing_tickers),
+            )
+        remote_frames = self._download_in_batches(missing_tickers or requested_tickers, start, end, interval)
+        frames.extend(remote_frames)
 
         if not frames:
-            raise ValueError("No price data could be downloaded for the requested universe.")
+            local_hint = self._format_local_data_hint(requested_tickers)
+            raise ValueError(
+                "No price data could be loaded. Remote providers failed, and no local raw files were found in "
+                f"{self.local_data_dir or 'the configured raw-data directory'}. {local_hint}"
+            )
 
         prices = pd.concat(frames, axis=1).sort_index(axis=1)
         prices.index = pd.to_datetime(prices.index).tz_localize(None)
@@ -279,6 +315,107 @@ class MarketDataIngester:
 
         return pd.read_parquet(cache_path)
 
+    def _load_local_price_frames(
+        self,
+        tickers: list[str],
+        start: str,
+        end: str,
+    ) -> tuple[list[pd.DataFrame], list[str]]:
+        if self.local_data_dir is None or not self.local_data_dir.exists():
+            return [], tickers
+
+        frames: list[pd.DataFrame] = []
+        missing: list[str] = []
+        start_ts = pd.Timestamp(start)
+        end_ts = pd.Timestamp(end)
+
+        for ticker in tickers:
+            path = self._find_local_price_file(ticker)
+            if path is None:
+                missing.append(ticker)
+                continue
+
+            formatted = self._load_local_price_file(path, ticker, start_ts, end_ts)
+            if formatted is None or formatted.empty:
+                missing.append(ticker)
+                continue
+
+            cleaned = self._validate_and_clean(formatted, ticker)
+            if cleaned is None:
+                missing.append(ticker)
+                continue
+
+            logger.info("Loaded {} from local raw file {}", ticker, path)
+            frames.append(cleaned)
+
+        return frames, missing
+
+    def _format_local_data_hint(self, tickers: list[str]) -> str:
+        sample_candidates = []
+        for ticker in tickers[:3]:
+            sample_candidates.extend(self._local_filename_candidates(ticker)[:2])
+        sample_text = ", ".join(sample_candidates[:6])
+        return (
+            "Expected local files with a Date column under the raw-data directory, for example: "
+            f"{sample_text}."
+        )
+
+    def _find_local_price_file(self, ticker: str) -> Path | None:
+        if self.local_data_dir is None:
+            return None
+
+        for candidate in self._local_filename_candidates(ticker):
+            matches = sorted(self.local_data_dir.rglob(candidate))
+            if matches:
+                return matches[0]
+
+        return None
+
+    def _load_local_price_file(
+        self,
+        path: Path,
+        ticker: str,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+    ) -> pd.DataFrame | None:
+        frame = pd.read_csv(path)
+        if frame.empty:
+            return None
+
+        lowered = {column.lower(): column for column in frame.columns}
+        if "date" not in lowered:
+            raise ValueError(f"Local price file {path} is missing a Date column.")
+
+        rename_map = {}
+        for canonical in ["date", "open", "high", "low", "close", "adj close", "adj_close", "volume"]:
+            if canonical in lowered:
+                rename_map[lowered[canonical]] = canonical
+        frame = frame.rename(columns=rename_map)
+
+        if "adj close" not in frame.columns and "close" in frame.columns:
+            frame["adj close"] = frame["close"]
+        if "volume" not in frame.columns:
+            frame["volume"] = np.nan
+
+        frame["date"] = pd.to_datetime(frame["date"])
+        frame = frame.set_index("date").sort_index()
+        frame = frame.loc[(frame.index >= start) & (frame.index <= end)]
+
+        normalized = frame.rename(
+            columns={
+                "open": "Open",
+                "high": "High",
+                "low": "Low",
+                "close": "Close",
+                "adj close": "Adj Close",
+                "volume": "Volume",
+            }
+        )
+        normalized = normalized.reindex(columns=self.REQUIRED_FIELDS)
+        normalized.columns = pd.MultiIndex.from_product([[ticker], normalized.columns])
+        normalized.index = pd.to_datetime(normalized.index).tz_localize(None)
+        return normalized
+
     def _save_cached_prices(
         self,
         prices: pd.DataFrame,
@@ -322,6 +459,16 @@ class MarketDataIngester:
         if ticker.startswith("^"):
             return [ticker]
         return [f"{ticker}.US", f"{ticker}.us", ticker]
+
+    @staticmethod
+    def _local_filename_candidates(ticker: str) -> list[str]:
+        base = ticker.lower().replace("^", "")
+        return [
+            f"{base}.us.txt",
+            f"{base}.us.csv",
+            f"{base}.txt",
+            f"{base}.csv",
+        ]
 
     def _fetch_stooq_csv(self, symbol: str, start: str, end: str) -> pd.DataFrame:
         start_ts = pd.Timestamp(start)
