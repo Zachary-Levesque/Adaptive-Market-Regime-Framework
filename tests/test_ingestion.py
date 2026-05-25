@@ -3,6 +3,7 @@ import pandas as pd
 from pathlib import Path
 
 from src.data.ingestion import MarketDataIngester
+import src.data.ingestion as ingestion_module
 
 
 def _sample_prices() -> pd.DataFrame:
@@ -60,3 +61,33 @@ def test_load_cached_prices_returns_saved_frame(tmp_path: Path):
 
     assert loaded is not None
     assert loaded.equals(prices)
+
+
+def test_fetch_stooq_csv_parses_valid_csv(monkeypatch):
+    ingester = MarketDataIngester()
+
+    csv_body = "\n".join(
+        [
+            "Date,Open,High,Low,Close,Volume",
+            "2024-01-02,100,101,99,100.5,1000",
+            "2024-01-03,101,102,100,101.5,1100",
+        ]
+    )
+
+    class DummyResponse:
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr(
+        ingestion_module.requests,
+        "get",
+        lambda *args, **kwargs: DummyResponse(csv_body),
+    )
+
+    frame = ingester._fetch_stooq_csv("AAPL.US", "2024-01-01", "2024-01-31")
+
+    assert not frame.empty
+    assert list(frame.columns) == ["Open", "High", "Low", "Close", "Volume"]
