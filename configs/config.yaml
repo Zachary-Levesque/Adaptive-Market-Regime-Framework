@@ -25,6 +25,7 @@ data:
   cache_dir: "data/raw"
   processed_dir: "data/processed"
   local_data_dir: "data/raw"
+  allow_remote_downloads: false
 
 regime:
   n_regimes: 4
