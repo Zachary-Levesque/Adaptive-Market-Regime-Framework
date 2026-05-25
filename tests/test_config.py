@@ -15,6 +15,7 @@ def test_load_config_parses_data_paths(tmp_path: Path):
                 "  benchmark: 'SPY'",
                 "  cache_dir: 'data/raw'",
                 "  processed_dir: 'data/processed'",
+                "  local_data_dir: 'data/raw/manual'",
             ]
         ),
         encoding="utf-8",
@@ -26,3 +27,4 @@ def test_load_config_parses_data_paths(tmp_path: Path):
     assert config.data.benchmark == "SPY"
     assert config.data.cache_dir == Path("data/raw")
     assert config.data.processed_dir == Path("data/processed")
+    assert config.data.local_data_dir == Path("data/raw/manual")
