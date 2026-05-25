@@ -77,6 +77,7 @@ def test_pipeline_build_persists_all_expected_outputs(tmp_path: Path):
         benchmark="SPY",
         cache_dir=tmp_path / "raw",
         processed_dir=tmp_path / "processed",
+        local_data_dir=tmp_path / "raw",
     )
     ingester = StubIngester(prices=prices, returns=returns)
     factor_loader = StubFactorLoader(ff5=ff5, macro=macro)
