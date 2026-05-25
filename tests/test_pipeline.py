@@ -11,8 +11,10 @@ class StubIngester:
         self._prices = prices
         self._returns = returns
         self.saved_paths: list[Path] = []
+        self.download_calls: list[list[str]] = []
 
     def download_prices(self, tickers, start, end):
+        self.download_calls.append(list(tickers))
         return self._prices
 
     def compute_returns(self, prices):
@@ -38,7 +40,7 @@ class StubFactorLoader:
 
 
 class StubFeatureEngineer:
-    def compute_technical_features(self, prices):
+    def compute_technical_features(self, prices, vix=None):
         return pd.DataFrame(
             {("SPY", "feature_x"): [1.0, 2.0, 3.0]},
             index=prices.index,
@@ -47,7 +49,7 @@ class StubFeatureEngineer:
     def normalize(self, features):
         return features * 10.0
 
-    def compute_regime_features(self, prices, macro, benchmark):
+    def compute_regime_features(self, prices, macro, benchmark, vix=None):
         return pd.DataFrame(
             {
                 "spy_return": [0.1, 0.2, 0.3],
@@ -69,7 +71,7 @@ def test_pipeline_build_persists_all_expected_outputs(tmp_path: Path):
     macro = pd.DataFrame({"DGS10": [4.0, 4.1, 4.2], "DGS2": [3.5, 3.6, 3.7]}, index=index)
 
     config = DataConfig(
-        universe=["SPY"],
+        universe=["SPY", "^VIX"],
         start_date="2024-01-01",
         end_date="2024-01-31",
         benchmark="SPY",
@@ -91,6 +93,7 @@ def test_pipeline_build_persists_all_expected_outputs(tmp_path: Path):
     assert artifacts.prices.equals(prices)
     assert artifacts.returns.equals(returns)
     assert artifacts.technical_features.iloc[0, 0] == 10.0
+    assert ingester.download_calls == [["SPY"]]
     assert len(ingester.saved_paths) == 6
     assert (tmp_path / "processed" / "prices.parquet") in ingester.saved_paths
     assert (tmp_path / "processed" / "regime_features.parquet") in ingester.saved_paths
