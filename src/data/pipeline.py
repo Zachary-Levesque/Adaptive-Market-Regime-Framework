@@ -46,7 +46,7 @@ class DataPipeline:
         feature_engineer: FeatureEngineer | None = None,
     ) -> None:
         self.config = config
-        self.ingester = ingester or MarketDataIngester()
+        self.ingester = ingester or MarketDataIngester(cache_dir=config.cache_dir)
         self.factor_loader = factor_loader or FactorLoader()
         self.feature_engineer = feature_engineer or FeatureEngineer()
 

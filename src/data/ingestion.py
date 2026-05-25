@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 from typing import Iterable
 
 import numpy as np
@@ -26,9 +27,19 @@ class MarketDataIngester:
 
     REQUIRED_FIELDS = ("Open", "High", "Low", "Close", "Adj Close", "Volume")
 
-    def __init__(self, max_forward_fill: int = 5, max_missing_fraction: float = 0.10):
+    def __init__(
+        self,
+        max_forward_fill: int = 5,
+        max_missing_fraction: float = 0.10,
+        cache_dir: str | Path | None = None,
+        retry_attempts: int = 3,
+        retry_delay_seconds: float = 2.0,
+    ):
         self.max_forward_fill = max_forward_fill
         self.max_missing_fraction = max_missing_fraction
+        self.cache_dir = Path(cache_dir) if cache_dir else None
+        self.retry_attempts = retry_attempts
+        self.retry_delay_seconds = retry_delay_seconds
 
     def download_prices(
         self,
@@ -41,38 +52,13 @@ class MarketDataIngester:
         if yf is None:
             raise ImportError("yfinance is required for download_prices(). Install dependencies first.")
 
-        frames: list[pd.DataFrame] = []
+        requested_tickers = list(dict.fromkeys(tickers))
+        cached = self._load_cached_prices(requested_tickers, start, end, interval)
+        if cached is not None:
+            logger.info("Loaded cached price history for {} tickers", len(cached.columns.levels[0]))
+            return cached
 
-        for ticker in tickers:
-            try:
-                raw = yf.download(
-                    ticker,
-                    start=start,
-                    end=end,
-                    interval=interval,
-                    auto_adjust=False,
-                    progress=False,
-                    threads=False,
-                )
-            except Exception as exc:  # pragma: no cover - network/runtime dependent
-                logger.exception("Failed to download {}: {}", ticker, exc)
-                continue
-
-            if raw.empty:
-                logger.warning("No data returned for {}", ticker)
-                continue
-
-            formatted = self._format_single_ticker_frame(raw, ticker)
-            if self._missing_fraction(formatted) > self.max_missing_fraction:
-                logger.warning(
-                    "Dropping {} due to missing fraction {:.2%}",
-                    ticker,
-                    self._missing_fraction(formatted),
-                )
-                continue
-
-            cleaned = formatted.ffill(limit=self.max_forward_fill)
-            frames.append(cleaned)
+        frames = self._download_in_batches(requested_tickers, start, end, interval)
 
         if not frames:
             raise ValueError("No price data could be downloaded for the requested universe.")
@@ -80,6 +66,7 @@ class MarketDataIngester:
         prices = pd.concat(frames, axis=1).sort_index(axis=1)
         prices.index = pd.to_datetime(prices.index).tz_localize(None)
         logger.info("Downloaded price history for {} tickers", len(prices.columns.levels[0]))
+        self._save_cached_prices(prices, requested_tickers, start, end, interval)
         return prices
 
     def compute_returns(self, prices: pd.DataFrame) -> pd.DataFrame:
@@ -113,6 +100,153 @@ class MarketDataIngester:
         if not input_path.exists():
             raise FileNotFoundError(f"Dataset not found: {input_path}")
         return pd.read_parquet(input_path)
+
+    def _download_in_batches(
+        self,
+        tickers: list[str],
+        start: str,
+        end: str,
+        interval: str,
+    ) -> list[pd.DataFrame]:
+        frames: list[pd.DataFrame] = []
+        batched_raw = self._download_batch(tickers, start, end, interval)
+        remaining: list[str] = []
+
+        for ticker in tickers:
+            formatted = self._extract_ticker_from_batch(batched_raw, ticker)
+            if formatted is None or formatted.dropna(how="all").empty:
+                remaining.append(ticker)
+                continue
+
+            cleaned = self._validate_and_clean(formatted, ticker)
+            if cleaned is not None:
+                frames.append(cleaned)
+
+        for ticker in remaining:
+            raw = self._download_single_with_retry(ticker, start, end, interval)
+            if raw is None or raw.empty:
+                logger.warning("No data returned for {}", ticker)
+                continue
+
+            formatted = self._format_single_ticker_frame(raw, ticker)
+            cleaned = self._validate_and_clean(formatted, ticker)
+            if cleaned is not None:
+                frames.append(cleaned)
+
+        return frames
+
+    def _download_batch(self, tickers: list[str], start: str, end: str, interval: str) -> pd.DataFrame:
+        try:
+            raw = yf.download(
+                tickers=tickers,
+                start=start,
+                end=end,
+                interval=interval,
+                auto_adjust=False,
+                progress=False,
+                threads=False,
+                group_by="ticker",
+            )
+        except Exception as exc:  # pragma: no cover - network/runtime dependent
+            logger.warning("Batch download failed, falling back to selective retries: {}", exc)
+            return pd.DataFrame()
+
+        return raw if isinstance(raw, pd.DataFrame) else pd.DataFrame()
+
+    def _download_single_with_retry(
+        self,
+        ticker: str,
+        start: str,
+        end: str,
+        interval: str,
+    ) -> pd.DataFrame | None:
+        for attempt in range(1, self.retry_attempts + 1):
+            try:
+                raw = yf.download(
+                    ticker,
+                    start=start,
+                    end=end,
+                    interval=interval,
+                    auto_adjust=False,
+                    progress=False,
+                    threads=False,
+                )
+            except Exception as exc:  # pragma: no cover - network/runtime dependent
+                logger.warning("Download attempt {}/{} failed for {}: {}", attempt, self.retry_attempts, ticker, exc)
+                raw = pd.DataFrame()
+
+            if not raw.empty:
+                return raw
+
+            if attempt < self.retry_attempts:
+                time.sleep(self.retry_delay_seconds * attempt)
+
+        return None
+
+    def _validate_and_clean(self, formatted: pd.DataFrame, ticker: str) -> pd.DataFrame | None:
+        missing_fraction = self._missing_fraction(formatted)
+        if missing_fraction > self.max_missing_fraction:
+            logger.warning("Dropping {} due to missing fraction {:.2%}", ticker, missing_fraction)
+            return None
+
+        return formatted.ffill(limit=self.max_forward_fill)
+
+    def _extract_ticker_from_batch(self, batch_frame: pd.DataFrame, ticker: str) -> pd.DataFrame | None:
+        if batch_frame.empty:
+            return None
+
+        if isinstance(batch_frame.columns, pd.MultiIndex):
+            level_zero = batch_frame.columns.get_level_values(0)
+            level_one = batch_frame.columns.get_level_values(1)
+
+            if ticker in level_zero:
+                ticker_frame = batch_frame[ticker].copy()
+                return self._format_single_ticker_frame(ticker_frame, ticker)
+
+            if ticker in level_one:
+                ticker_frame = batch_frame.xs(ticker, axis=1, level=1).copy()
+                return self._format_single_ticker_frame(ticker_frame, ticker)
+
+        if not batch_frame.empty:
+            return self._format_single_ticker_frame(batch_frame.copy(), ticker)
+
+        return None
+
+    def _cache_path(self, tickers: list[str], start: str, end: str, interval: str) -> Path | None:
+        if self.cache_dir is None:
+            return None
+
+        safe_name = "_".join(tickers).replace("^", "IDX_")
+        filename = f"{safe_name}_{start}_{end}_{interval}.parquet"
+        return self.cache_dir / filename
+
+    def _load_cached_prices(
+        self,
+        tickers: list[str],
+        start: str,
+        end: str,
+        interval: str,
+    ) -> pd.DataFrame | None:
+        cache_path = self._cache_path(tickers, start, end, interval)
+        if cache_path is None or not cache_path.exists():
+            return None
+
+        return pd.read_parquet(cache_path)
+
+    def _save_cached_prices(
+        self,
+        prices: pd.DataFrame,
+        tickers: list[str],
+        start: str,
+        end: str,
+        interval: str,
+    ) -> None:
+        cache_path = self._cache_path(tickers, start, end, interval)
+        if cache_path is None:
+            return
+
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        prices.to_parquet(cache_path)
 
     def _format_single_ticker_frame(self, frame: pd.DataFrame, ticker: str) -> pd.DataFrame:
         normalized = frame.copy()

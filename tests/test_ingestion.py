@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from pathlib import Path
 
 from src.data.ingestion import MarketDataIngester
 
@@ -37,3 +38,25 @@ def test_compute_returns_removes_large_outlier():
     returns = ingester.compute_returns(_sample_prices())
 
     assert np.isnan(returns.iloc[14]["SPY"]) or np.isnan(returns.iloc[15]["SPY"])
+
+
+def test_extract_ticker_from_batch_ticker_first_columns():
+    ingester = MarketDataIngester()
+    prices = _sample_prices()
+    batch = prices.swaplevel(axis=1).sort_index(axis=1).swaplevel(axis=1).sort_index(axis=1)
+
+    extracted = ingester._extract_ticker_from_batch(batch, "SPY")
+
+    assert extracted is not None
+    assert ("SPY", "Adj Close") in extracted.columns
+
+
+def test_load_cached_prices_returns_saved_frame(tmp_path: Path):
+    ingester = MarketDataIngester(cache_dir=tmp_path)
+    prices = _sample_prices()
+
+    ingester._save_cached_prices(prices, ["SPY", "QQQ"], "2024-01-01", "2024-02-01", "1d")
+    loaded = ingester._load_cached_prices(["SPY", "QQQ"], "2024-01-01", "2024-02-01", "1d")
+
+    assert loaded is not None
+    assert loaded.equals(prices)
