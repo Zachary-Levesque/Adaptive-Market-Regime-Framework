@@ -135,3 +135,25 @@ def test_inspect_local_data_reports_found_and_missing(tmp_path: Path):
     assert statuses[0].found is True
     assert statuses[1].ticker == "QQQ"
     assert statuses[1].found is False
+
+
+def test_download_prices_uses_local_files_without_yfinance(tmp_path: Path, monkeypatch):
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    (raw_dir / "spy.csv").write_text(
+        "\n".join(
+            [
+                "Date,Open,High,Low,Close,Volume",
+                "2024-01-02,100,101,99,100.5,1000",
+                "2024-01-03,101,102,100,101.5,1100",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(ingestion_module, "yf", None)
+    ingester = MarketDataIngester(local_data_dir=raw_dir, allow_remote_downloads=False)
+    prices = ingester.download_prices(["SPY"], "2024-01-01", "2024-01-31")
+
+    assert not prices.empty
+    assert ("SPY", "Adj Close") in prices.columns
