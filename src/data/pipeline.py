@@ -36,6 +36,7 @@ class DataPipeline:
     DEFAULT_MACRO_SERIES = {
         "DGS10": "DGS10",
         "DGS2": "DGS2",
+        "VIXCLS": "VIXCLS",
     }
 
     def __init__(
@@ -54,8 +55,10 @@ class DataPipeline:
         """Download, transform, and persist the Phase 1 datasets."""
         logger.info("Building Phase 1 datasets for {} tickers", len(self.config.universe))
 
+        price_universe = [ticker for ticker in self.config.universe if ticker not in {"^VIX", "VIX"}]
+
         prices = self.ingester.download_prices(
-            tickers=self.config.universe,
+            tickers=price_universe,
             start=self.config.start_date,
             end=self.config.end_date,
         )
@@ -70,11 +73,13 @@ class DataPipeline:
             end=self.config.end_date,
         )
         macro = macro.reindex(prices.index).ffill()
+        vix_series = macro["VIXCLS"] if "VIXCLS" in macro.columns else None
 
-        technical_features = self.feature_engineer.compute_technical_features(prices)
+        technical_features = self.feature_engineer.compute_technical_features(prices, vix=vix_series)
         technical_features = self.feature_engineer.normalize(technical_features)
         regime_features = self.feature_engineer.compute_regime_features(
             prices=prices,
+            vix=vix_series,
             macro=macro,
             benchmark=self.config.benchmark,
         )
