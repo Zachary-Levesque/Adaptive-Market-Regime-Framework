@@ -17,6 +17,7 @@ class DataConfig:
     benchmark: str
     cache_dir: Path
     processed_dir: Path
+    local_data_dir: Path
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,7 @@ def load_config(path: str | Path) -> AppConfig:
 
     cache_dir = Path(data_section.get("cache_dir", "data/raw"))
     processed_dir = Path(data_section.get("processed_dir", "data/processed"))
+    local_data_dir = Path(data_section.get("local_data_dir", "data/raw"))
 
     return AppConfig(
         data=DataConfig(
@@ -41,6 +43,7 @@ def load_config(path: str | Path) -> AppConfig:
             benchmark=str(data_section["benchmark"]),
             cache_dir=cache_dir,
             processed_dir=processed_dir,
+            local_data_dir=local_data_dir,
         )
     )
 
