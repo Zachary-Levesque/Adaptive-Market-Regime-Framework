@@ -16,6 +16,7 @@ def test_load_config_parses_data_paths(tmp_path: Path):
                 "  cache_dir: 'data/raw'",
                 "  processed_dir: 'data/processed'",
                 "  local_data_dir: 'data/raw/manual'",
+                "  allow_remote_downloads: false",
             ]
         ),
         encoding="utf-8",
@@ -28,3 +29,4 @@ def test_load_config_parses_data_paths(tmp_path: Path):
     assert config.data.cache_dir == Path("data/raw")
     assert config.data.processed_dir == Path("data/processed")
     assert config.data.local_data_dir == Path("data/raw/manual")
+    assert config.data.allow_remote_downloads is False
