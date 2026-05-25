@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from io import StringIO
 import time
 from typing import Iterable
 
 import numpy as np
 import pandas as pd
+import requests
 
 try:  # pragma: no cover - exercised indirectly depending on environment
     import yfinance as yf
@@ -20,11 +22,6 @@ except ImportError:  # pragma: no cover - dependency may not be installed in CI/
     import logging
 
     logger = logging.getLogger(__name__)
-
-try:  # pragma: no cover - exercised indirectly depending on environment
-    from pandas_datareader import data as web
-except ImportError:  # pragma: no cover - dependency may not be installed in CI/local env
-    web = None
 
 
 class MarketDataIngester:
@@ -213,13 +210,11 @@ class MarketDataIngester:
         return frames
 
     def _download_single_from_stooq(self, ticker: str, start: str, end: str) -> pd.DataFrame | None:
-        if web is None:
-            return None
-
         for symbol in self._stooq_symbol_candidates(ticker):
             try:
-                raw = web.DataReader(symbol, "stooq", start, end)
-            except Exception:  # pragma: no cover - network/runtime dependent
+                raw = self._fetch_stooq_csv(symbol, start, end)
+            except Exception as exc:  # pragma: no cover - network/runtime dependent
+                logger.warning("Stooq request failed for {} using symbol {}: {}", ticker, symbol, exc)
                 continue
 
             if raw is None or raw.empty:
@@ -326,7 +321,38 @@ class MarketDataIngester:
     def _stooq_symbol_candidates(ticker: str) -> list[str]:
         if ticker.startswith("^"):
             return [ticker]
-        return [f"{ticker}.US", ticker]
+        return [f"{ticker}.US", f"{ticker}.us", ticker]
+
+    def _fetch_stooq_csv(self, symbol: str, start: str, end: str) -> pd.DataFrame:
+        start_ts = pd.Timestamp(start)
+        end_ts = pd.Timestamp(end)
+        response = requests.get(
+            "https://stooq.com/q/d/l/",
+            params={
+                "s": symbol,
+                "i": "d",
+                "d1": start_ts.strftime("%Y%m%d"),
+                "d2": end_ts.strftime("%Y%m%d"),
+            },
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=20,
+        )
+        response.raise_for_status()
+
+        body = response.text.strip()
+        if not body or body.lower() == "no data":
+            return pd.DataFrame()
+
+        frame = pd.read_csv(StringIO(body))
+        if frame.empty:
+            return frame
+
+        if "Date" not in frame.columns:
+            raise ValueError(f"Unexpected Stooq response columns for {symbol}: {list(frame.columns)}")
+
+        frame["Date"] = pd.to_datetime(frame["Date"])
+        frame = frame.set_index("Date").sort_index()
+        return frame
 
     def _missing_fraction(self, formatted: pd.DataFrame) -> float:
         anchor = formatted.xs("Adj Close", axis=1, level=1).iloc[:, 0]
