@@ -21,6 +21,11 @@ except ImportError:  # pragma: no cover - dependency may not be installed in CI/
 
     logger = logging.getLogger(__name__)
 
+try:  # pragma: no cover - exercised indirectly depending on environment
+    from pandas_datareader import data as web
+except ImportError:  # pragma: no cover - dependency may not be installed in CI/local env
+    web = None
+
 
 class MarketDataIngester:
     """Download, clean, and persist market data."""
@@ -122,14 +127,25 @@ class MarketDataIngester:
             if cleaned is not None:
                 frames.append(cleaned)
 
+        if not frames and remaining:
+            logger.warning("Yahoo returned no usable data for the batch. Falling back to Stooq.")
+            return self._download_from_stooq(remaining, start, end)
+
         for ticker in remaining:
             raw = self._download_single_with_retry(ticker, start, end, interval)
-            if raw is None or raw.empty:
+            if raw is not None and not raw.empty:
+                formatted = self._format_single_ticker_frame(raw, ticker)
+                cleaned = self._validate_and_clean(formatted, ticker)
+                if cleaned is not None:
+                    frames.append(cleaned)
+                    continue
+
+            stooq_frame = self._download_single_from_stooq(ticker, start, end)
+            if stooq_frame is None:
                 logger.warning("No data returned for {}", ticker)
                 continue
 
-            formatted = self._format_single_ticker_frame(raw, ticker)
-            cleaned = self._validate_and_clean(formatted, ticker)
+            cleaned = self._validate_and_clean(stooq_frame, ticker)
             if cleaned is not None:
                 frames.append(cleaned)
 
@@ -180,6 +196,41 @@ class MarketDataIngester:
 
             if attempt < self.retry_attempts:
                 time.sleep(self.retry_delay_seconds * attempt)
+
+        return None
+
+    def _download_from_stooq(self, tickers: list[str], start: str, end: str) -> list[pd.DataFrame]:
+        frames: list[pd.DataFrame] = []
+        for ticker in tickers:
+            stooq_frame = self._download_single_from_stooq(ticker, start, end)
+            if stooq_frame is None:
+                logger.warning("No data returned for {}", ticker)
+                continue
+
+            cleaned = self._validate_and_clean(stooq_frame, ticker)
+            if cleaned is not None:
+                frames.append(cleaned)
+        return frames
+
+    def _download_single_from_stooq(self, ticker: str, start: str, end: str) -> pd.DataFrame | None:
+        if web is None:
+            return None
+
+        for symbol in self._stooq_symbol_candidates(ticker):
+            try:
+                raw = web.DataReader(symbol, "stooq", start, end)
+            except Exception:  # pragma: no cover - network/runtime dependent
+                continue
+
+            if raw is None or raw.empty:
+                continue
+
+            ordered = raw.sort_index()
+            formatted = self._format_stooq_frame(ordered, ticker)
+            if formatted.dropna(how="all").empty:
+                continue
+            logger.info("Loaded {} from Stooq fallback using symbol {}", ticker, symbol)
+            return formatted
 
         return None
 
@@ -258,6 +309,24 @@ class MarketDataIngester:
         normalized = normalized.reindex(columns=self.REQUIRED_FIELDS)
         normalized.columns = pd.MultiIndex.from_product([[ticker], normalized.columns])
         return normalized.sort_index()
+
+    def _format_stooq_frame(self, frame: pd.DataFrame, ticker: str) -> pd.DataFrame:
+        normalized = frame.copy()
+        normalized.columns = [str(column).title() for column in normalized.columns]
+        if "Adj Close" not in normalized.columns and "Close" in normalized.columns:
+            normalized["Adj Close"] = normalized["Close"]
+        if "Volume" not in normalized.columns:
+            normalized["Volume"] = np.nan
+        normalized = normalized.reindex(columns=self.REQUIRED_FIELDS)
+        normalized.columns = pd.MultiIndex.from_product([[ticker], normalized.columns])
+        normalized.index = pd.to_datetime(normalized.index).tz_localize(None)
+        return normalized.sort_index()
+
+    @staticmethod
+    def _stooq_symbol_candidates(ticker: str) -> list[str]:
+        if ticker.startswith("^"):
+            return [ticker]
+        return [f"{ticker}.US", ticker]
 
     def _missing_fraction(self, formatted: pd.DataFrame) -> float:
         anchor = formatted.xs("Adj Close", axis=1, level=1).iloc[:, 0]
