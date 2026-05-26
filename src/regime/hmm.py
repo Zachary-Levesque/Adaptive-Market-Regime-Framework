@@ -64,7 +64,8 @@ class RegimeHMM:
     def preprocess(self, features: pd.DataFrame, fit: bool = False) -> tuple[np.ndarray, pd.Index]:
         """Clean, align, and standardize features before model application."""
         frame = self._coerce_features(features)
-        valid = frame.replace([np.inf, -np.inf], np.nan).dropna(how="any")
+        cleaned = frame.replace([np.inf, -np.inf], np.nan)
+        valid = cleaned.dropna(how="all")
         if valid.empty:
             raise ValueError("No fully-observed feature rows available for regime modeling.")
 
