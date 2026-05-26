@@ -30,3 +30,5 @@ def test_load_config_parses_data_paths(tmp_path: Path):
     assert config.data.processed_dir == Path("data/processed")
     assert config.data.local_data_dir == Path("data/raw/manual")
     assert config.data.allow_remote_downloads is False
+    assert config.regime.n_regimes == 4
+    assert config.regime.model_path == Path("src/regime/hmm_model.pkl")
