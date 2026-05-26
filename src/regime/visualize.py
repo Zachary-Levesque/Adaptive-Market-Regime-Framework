@@ -20,13 +20,14 @@ def plot_regime_history(
     prices: pd.DataFrame,
     regime_labels: pd.Series,
     regime_probs: pd.DataFrame,
+    regime_summary: pd.DataFrame,
     benchmark: str = "SPY",
     path: str | Path | None = None,
 ):
     """Plot price, regime probabilities, and regime distribution."""
     close = _extract_close(prices, benchmark)
-    labels = regime_labels.reindex(close.index).ffill().bfill().astype(int)
-    probs = regime_probs.reindex(close.index).ffill().bfill()
+    labels = regime_labels.reindex(close.index)
+    probs = regime_probs.reindex(close.index)
 
     fig, axes = plt.subplots(
         nrows=3,
@@ -55,14 +56,28 @@ def plot_regime_history(
     ax_probs.set_ylim(0, 1)
     ax_probs.legend(loc="upper left", ncol=2)
 
-    counts = labels.value_counts().sort_index()
+    regime_metrics = regime_summary.sort_values("canonical_label")
+    metric_labels = regime_metrics["canonical_name"].tolist()
+    x = range(len(metric_labels))
+    bar_width = 0.38
     ax_dist.bar(
-        [f"Regime {regime}" for regime in counts.index],
-        counts.values,
-        color=[REGIME_COLORS.get(int(regime), "#495057") for regime in counts.index],
+        [position - bar_width / 2 for position in x],
+        regime_metrics["mean_return"].to_numpy(),
+        width=bar_width,
+        color="#4263eb",
+        label="Mean Return",
     )
-    ax_dist.set_title("Regime Distribution")
-    ax_dist.set_ylabel("Days")
+    ax_dist.bar(
+        [position + bar_width / 2 for position in x],
+        regime_metrics["volatility"].to_numpy(),
+        width=bar_width,
+        color="#f76707",
+        label="Volatility",
+    )
+    ax_dist.set_xticks(list(x))
+    ax_dist.set_xticklabels(metric_labels, rotation=15, ha="right")
+    ax_dist.set_title("Regime Return / Volatility Summary")
+    ax_dist.legend(loc="upper left")
 
     for event_date, title in [
         ("2008-09-15", "Lehman"),
