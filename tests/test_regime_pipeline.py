@@ -58,6 +58,7 @@ def _synthetic_inputs():
 
 def test_regime_pipeline_build_persists_outputs(tmp_path: Path):
     features, prices = _synthetic_inputs()
+    features.iloc[:5, :] = np.nan
     config = RegimeConfig(
         n_regimes=4,
         n_iter=50,
@@ -76,8 +77,12 @@ def test_regime_pipeline_build_persists_outputs(tmp_path: Path):
 
     artifacts = RegimeDetectionPipeline(config).build(features, prices, benchmark="SPY")
 
-    assert set(artifacts.regime_labels["regime"].unique()) == {0, 1, 2, 3}
-    assert np.allclose(artifacts.regime_probs.sum(axis=1).to_numpy(), 1.0)
+    observed_regimes = set(artifacts.regime_labels["regime"].dropna().astype(int).unique())
+    assert observed_regimes == {0, 1, 2, 3}
+    assert artifacts.regime_labels["regime"].iloc[:5].isna().all()
+    assert artifacts.regime_probs.iloc[:5].isna().all().all()
+    valid_prob_sums = artifacts.regime_probs.dropna(how="any").sum(axis=1).to_numpy()
+    assert np.allclose(valid_prob_sums, 1.0)
     assert (tmp_path / "regimes" / "regime_labels.parquet").exists()
     assert (tmp_path / "regimes" / "regime_probs.parquet").exists()
     assert (tmp_path / "regimes" / "history.png").exists()
