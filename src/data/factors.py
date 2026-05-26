@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import sys
+import types
 from typing import Mapping
 
 import pandas as pd
+from packaging.version import parse as parse_version
 
 try:  # pragma: no cover - exercised indirectly depending on environment
     from loguru import logger
@@ -14,6 +17,44 @@ except ImportError:  # pragma: no cover - dependency may not be installed in CI/
     logger = logging.getLogger(__name__)
 
 try:  # pragma: no cover - exercised indirectly depending on environment
+    # pandas-datareader 0.10 still imports distutils on Python 3.12.
+    class _LooseVersion:
+        def __init__(self, version: str) -> None:
+            self.version = version
+            self._parsed = parse_version(version)
+
+        def __lt__(self, other: object) -> bool:
+            if not isinstance(other, _LooseVersion):
+                return NotImplemented
+            return self._parsed < other._parsed
+
+        def __le__(self, other: object) -> bool:
+            if not isinstance(other, _LooseVersion):
+                return NotImplemented
+            return self._parsed <= other._parsed
+
+        def __eq__(self, other: object) -> bool:
+            if not isinstance(other, _LooseVersion):
+                return NotImplemented
+            return self._parsed == other._parsed
+
+        def __gt__(self, other: object) -> bool:
+            if not isinstance(other, _LooseVersion):
+                return NotImplemented
+            return self._parsed > other._parsed
+
+        def __ge__(self, other: object) -> bool:
+            if not isinstance(other, _LooseVersion):
+                return NotImplemented
+            return self._parsed >= other._parsed
+
+    distutils_module = types.ModuleType("distutils")
+    distutils_version_module = types.ModuleType("distutils.version")
+    distutils_version_module.LooseVersion = _LooseVersion
+    distutils_module.version = distutils_version_module
+    sys.modules.setdefault("distutils", distutils_module)
+    sys.modules.setdefault("distutils.version", distutils_version_module)
+
     from pandas_datareader import data as web
 except ImportError:  # pragma: no cover - dependency may not be installed in CI/local env
     web = None
@@ -84,6 +125,9 @@ class FactorLoader:
     @staticmethod
     def _clean_factor_frame(frame: pd.DataFrame) -> pd.DataFrame:
         cleaned = frame.copy()
-        cleaned.index = pd.to_datetime(cleaned.index.astype(str), format="%Y%m%d")
+        parsed_index = pd.to_datetime(cleaned.index.astype(str), format="%Y%m%d", errors="coerce")
+        if parsed_index.isna().any():
+            parsed_index = pd.to_datetime(cleaned.index.astype(str), errors="raise")
+        cleaned.index = parsed_index
         cleaned.columns = [column.strip() for column in cleaned.columns]
         return cleaned.astype(float).div(100.0)
