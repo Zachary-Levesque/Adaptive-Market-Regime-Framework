@@ -60,30 +60,31 @@ class RegimeDetectionPipeline:
         prices: pd.DataFrame,
         benchmark: str = "SPY",
     ) -> RegimeArtifacts:
-        logger.info("Building regime detection outputs from {} observations", len(regime_features))
+        model_features = self._model_features(regime_features)
+        logger.info("Building regime detection outputs from {} observations", len(model_features))
 
-        self.hmm.fit(regime_features)
-        raw_labels = self.hmm.predict_regimes(regime_features, apply_mapping=False)
-        summary = self.hmm.label_regimes(raw_labels, regime_features.loc[raw_labels.index, "spy_return"])
+        self.hmm.fit(model_features)
+        raw_labels = self.hmm.predict_regimes(model_features, apply_mapping=False)
+        summary = self.hmm.label_regimes(raw_labels, model_features.loc[raw_labels.index, "spy_return"])
 
-        labels = self.hmm.predict_regimes(regime_features)
-        probs = self.hmm.predict_proba(regime_features)
+        labels = self.hmm.predict_regimes(model_features)
+        probs = self.hmm.predict_proba(model_features)
         transition_matrix = self.smoother.compute_transition_matrix(labels)
         smoothed_probs = self.smoother.smooth_probabilities(probs, transition_matrix)
         filtered_probs = self.kalman_filter.filter(smoothed_probs)
         full_probs = self._expand_probabilities(filtered_probs, regime_features.index)
-        full_labels = full_probs.idxmax(axis=1).map(self._name_to_label())
+        full_labels = self._labels_from_probabilities(full_probs)
 
         regime_label_frame = pd.DataFrame(
             {
-                "regime": full_labels.astype(int),
+                "regime": full_labels,
                 "regime_name": full_labels.map(self.config.regime_names),
             },
             index=regime_features.index,
         )
 
-        self.gmm.fit(regime_features)
-        gmm_labels = self.gmm.predict(regime_features)
+        self.gmm.fit(model_features)
+        gmm_labels = self.gmm.predict(model_features)
         gmm_score = self.gmm.compare_with_hmm(labels, gmm_labels)
 
         artifacts = RegimeArtifacts(
@@ -111,6 +112,7 @@ class RegimeDetectionPipeline:
             prices=prices,
             regime_labels=artifacts.regime_labels["regime"],
             regime_probs=artifacts.regime_probs,
+            regime_summary=artifacts.regime_summary,
             benchmark=benchmark,
             path=self.config.chart_path,
         )
@@ -118,8 +120,26 @@ class RegimeDetectionPipeline:
         logger.info("Saved regime outputs to {}", self.config.output_dir)
 
     def _expand_probabilities(self, probabilities: pd.DataFrame, full_index: pd.Index) -> pd.DataFrame:
-        expanded = probabilities.reindex(full_index).ffill().bfill()
-        return expanded.div(expanded.sum(axis=1), axis=0)
+        expanded = probabilities.reindex(full_index)
+        row_sums = expanded.sum(axis=1)
+        valid_rows = row_sums.notna() & (row_sums > 0.0)
+        expanded.loc[valid_rows] = expanded.loc[valid_rows].div(row_sums.loc[valid_rows], axis=0)
+        return expanded
+
+    @staticmethod
+    def _model_features(regime_features: pd.DataFrame) -> pd.DataFrame:
+        complete_rows = regime_features.notna().all(axis=1)
+        if not complete_rows.any():
+            raise ValueError("No fully observed regime-feature rows are available for phase-two modeling.")
+        first_complete_index = complete_rows[complete_rows].index[0]
+        return regime_features.loc[first_complete_index:]
+
+    def _labels_from_probabilities(self, probabilities: pd.DataFrame) -> pd.Series:
+        valid_rows = probabilities.notna().any(axis=1)
+        label_names = pd.Series(index=probabilities.index, dtype="object")
+        label_names.loc[valid_rows] = probabilities.loc[valid_rows].idxmax(axis=1)
+        labels = label_names.map(self._name_to_label())
+        return labels.astype("Int64")
 
     def _name_to_label(self) -> dict[str, int]:
         return {name: label for label, name in self.config.regime_names.items()}
