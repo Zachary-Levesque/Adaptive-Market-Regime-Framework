@@ -25,12 +25,26 @@ def main() -> None:
     price_universe = [ticker for ticker in config.data.universe if ticker not in {"^VIX", "VIX"}]
 
     ingester = MarketDataIngester(local_data_dir=config.data.local_data_dir)
+    cache_ingester = MarketDataIngester(cache_dir=config.data.cache_dir)
+    cached_prices = cache_ingester._load_cached_prices(
+        price_universe,
+        config.data.start_date,
+        config.data.end_date,
+        "1d",
+    )
     statuses = ingester.inspect_local_data(price_universe)
 
     found = [status for status in statuses if status.found]
     missing = [status for status in statuses if not status.found]
 
     print(f"Local data directory: {config.data.local_data_dir}")
+    print(f"Cache directory: {config.data.cache_dir}")
+    if cached_prices is not None:
+        cached_tickers = sorted(cached_prices.columns.get_level_values(0).unique())
+        print(f"Cached multi-ticker parquet: found ({len(cached_tickers)} tickers)")
+        print("Phase 1 price ingestion can use this cache without individual ticker files.")
+    else:
+        print("Cached multi-ticker parquet: not found")
     print(f"Tickers checked: {len(statuses)}")
     print(f"Resolved locally: {len(found)}")
     print(f"Missing locally: {len(missing)}")
@@ -41,7 +55,7 @@ def main() -> None:
             print(f"  {status.ticker}: {status.path}")
 
     if missing:
-        print("\nMissing:")
+        print("\nMissing individual ticker files:")
         for status in missing:
             candidates = ", ".join(ingester._local_filename_candidates(status.ticker))
             print(f"  {status.ticker}: expected one of [{candidates}] under {config.data.local_data_dir}")
