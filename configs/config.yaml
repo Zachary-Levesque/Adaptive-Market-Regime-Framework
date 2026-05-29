@@ -38,6 +38,7 @@ regime:
     3: "High-Vol Crisis"
 
 alpha:
+  diagnostics_path: "data/processed/alpha_diagnostics.parquet"
   lstm:
     hidden_size: 128
     num_layers: 2
