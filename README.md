@@ -242,6 +242,9 @@ python src/alpha/lstm.py
 # Diagnose alpha signal quality
 python -m src.alpha.build_diagnostics
 
+# Compare alpha models against baselines
+python -m src.alpha.build_model_comparison
+
 # Train RL agent
 python src/rl/agent.py
  
