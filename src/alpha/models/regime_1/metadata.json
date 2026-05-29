@@ -1,0 +1,34 @@
+{
+  "input_size": 20,
+  "hidden_size": 128,
+  "num_layers": 2,
+  "dropout": 0.2,
+  "sequence_length": 60,
+  "target_regime": 1,
+  "feature_names": [
+    "tech__bollinger_zscore",
+    "tech__momentum_12_1",
+    "tech__price_to_ma200",
+    "tech__price_to_ma50",
+    "tech__return_1d",
+    "tech__return_21d",
+    "tech__return_5d",
+    "tech__return_63d",
+    "tech__volatility_21d",
+    "tech__volatility_63d",
+    "tech__volume_ratio_20d",
+    "market__vix_5d_change",
+    "market__vix_level",
+    "factor__Mkt-RF",
+    "factor__SMB",
+    "factor__HML",
+    "factor__RMW",
+    "factor__CMA",
+    "factor__RF",
+    "factor__UMD"
+  ],
+  "weights": {
+    "lstm": 0.5037105365094562,
+    "transformer": 0.4962894634905438
+  }
+}
