@@ -57,10 +57,23 @@ class AlphaConfig:
 
 
 @dataclass(frozen=True)
+class RiskConfig:
+    n_simulations: int
+    confidence_level: float
+    stress_periods: dict[str, tuple[str, str]]
+    output_dir: Path
+    transaction_cost_bps: float
+    max_gross_exposure: float
+    long_fraction: float
+    short_fraction: float
+
+
+@dataclass(frozen=True)
 class AppConfig:
     data: DataConfig
     regime: RegimeConfig
     alpha: AlphaConfig
+    risk: RiskConfig
 
 
 def load_config(path: str | Path) -> AppConfig:
@@ -75,6 +88,7 @@ def load_config(path: str | Path) -> AppConfig:
     allow_remote_downloads = bool(data_section.get("allow_remote_downloads", False))
     regime_section = raw.get("regime", {})
     alpha_section = raw.get("alpha", {})
+    risk_section = raw.get("risk", {})
     lstm_section = alpha_section.get("lstm", {})
     walk_forward_section = alpha_section.get("walk_forward", {})
     regime_names = {
@@ -131,6 +145,25 @@ def load_config(path: str | Path) -> AppConfig:
             weight_decay=float(alpha_section.get("weight_decay", 1e-5)),
             patience=int(alpha_section.get("patience", 10)),
             device=str(alpha_section.get("device", "cpu")),
+        ),
+        risk=RiskConfig(
+            n_simulations=int(risk_section.get("n_simulations", 10000)),
+            confidence_level=float(risk_section.get("confidence_level", 0.95)),
+            stress_periods={
+                str(name): (str(bounds[0]), str(bounds[1]))
+                for name, bounds in risk_section.get(
+                    "stress_periods",
+                    {
+                        "covid": ("2020-02-19", "2020-03-23"),
+                        "rate_hike": ("2022-01-03", "2022-12-31"),
+                    },
+                ).items()
+            },
+            output_dir=Path(risk_section.get("output_dir", "data/results")),
+            transaction_cost_bps=float(risk_section.get("transaction_cost_bps", 10.0)),
+            max_gross_exposure=float(risk_section.get("max_gross_exposure", 1.0)),
+            long_fraction=float(risk_section.get("long_fraction", 0.2)),
+            short_fraction=float(risk_section.get("short_fraction", 0.2)),
         ),
     )
 
