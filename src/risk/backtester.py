@@ -27,6 +27,7 @@ class BacktestConfig:
     short_fraction: float = 0.2
     transaction_cost_bps: float = 10.0
     benchmark: str = "SPY"
+    momentum_lookback: int = 63
 
 
 @dataclass
@@ -64,17 +65,20 @@ class AMRFBacktester:
         returns, signals = self._aligned_inputs(start=start, end=end)
         raw_weights = self.construct_signal_weights(signals)
         applied_weights = raw_weights.shift(1).reindex(returns.index).fillna(0.0)
+        pnl_returns = returns.fillna(0.0)
 
-        gross_returns = (applied_weights * returns).sum(axis=1)
+        gross_returns = (applied_weights * pnl_returns).sum(axis=1)
         turnover = applied_weights.diff().abs().sum(axis=1).fillna(applied_weights.abs().sum(axis=1))
         transaction_cost = turnover * (self.config.transaction_cost_bps / 10_000.0)
         strategy_returns = gross_returns - transaction_cost
 
         benchmark_returns = (
-            returns[self.config.benchmark]
-            if self.config.benchmark in returns.columns
+            pnl_returns[self.config.benchmark]
+            if self.config.benchmark in pnl_returns.columns
             else pd.Series(0.0, index=returns.index)
         )
+        equal_weight_returns = self._equal_weight_returns(pnl_returns)
+        momentum_returns = self._momentum_baseline_returns(returns, pnl_returns)
 
         daily_results = pd.DataFrame(
             {
@@ -83,8 +87,12 @@ class AMRFBacktester:
                 "transaction_cost": transaction_cost,
                 "strategy_return": strategy_returns,
                 "benchmark_return": benchmark_returns,
+                "equal_weight_return": equal_weight_returns,
+                "momentum_return": momentum_returns,
                 "equity": (1.0 + strategy_returns).cumprod(),
                 "benchmark_equity": (1.0 + benchmark_returns).cumprod(),
+                "equal_weight_equity": (1.0 + equal_weight_returns).cumprod(),
+                "momentum_equity": (1.0 + momentum_returns).cumprod(),
             },
             index=returns.index,
         )
@@ -147,6 +155,12 @@ class AMRFBacktester:
             "strategy": self.metrics.summarize(daily_results["strategy_return"]),
             self.config.benchmark: self.metrics.summarize(daily_results["benchmark_return"]),
         }
+        if "equal_weight_return" in daily_results.columns:
+            rows["equal_weight"] = self.metrics.summarize(daily_results["equal_weight_return"])
+        if "momentum_return" in daily_results.columns:
+            rows[f"momentum_{self.config.momentum_lookback}d"] = self.metrics.summarize(
+                daily_results["momentum_return"]
+            )
         return pd.DataFrame(rows).T
 
     def save(
@@ -193,6 +207,36 @@ class AMRFBacktester:
         if not active_rows.any():
             return None
         return pd.Timestamp(active_rows[active_rows].index[0])
+
+    def _equal_weight_returns(self, returns: pd.DataFrame) -> pd.Series:
+        asset_returns = returns.drop(columns=[self.config.benchmark], errors="ignore")
+        if asset_returns.empty:
+            asset_returns = returns
+        equal_weight = asset_returns.mean(axis=1)
+        equal_weight.name = "equal_weight_return"
+        return equal_weight
+
+    def _momentum_baseline_returns(self, raw_returns: pd.DataFrame, pnl_returns: pd.DataFrame) -> pd.Series:
+        lookback = self.config.momentum_lookback
+        raw_asset_returns = raw_returns.drop(columns=[self.config.benchmark], errors="ignore")
+        pnl_asset_returns = pnl_returns.drop(columns=[self.config.benchmark], errors="ignore")
+        if raw_asset_returns.empty:
+            raw_asset_returns = raw_returns
+            pnl_asset_returns = pnl_returns
+
+        min_periods = min(lookback, max(5, lookback // 3))
+        momentum_scores = (1.0 + raw_asset_returns).rolling(lookback, min_periods=min_periods).apply(
+            np.prod,
+            raw=True,
+        ) - 1.0
+        momentum_weights = self.construct_signal_weights(momentum_scores)
+        applied_weights = momentum_weights.shift(1).reindex(pnl_asset_returns.index).fillna(0.0)
+        gross_returns = (applied_weights * pnl_asset_returns).sum(axis=1)
+        turnover = applied_weights.diff().abs().sum(axis=1).fillna(applied_weights.abs().sum(axis=1))
+        transaction_cost = turnover * (self.config.transaction_cost_bps / 10_000.0)
+        momentum_returns = gross_returns - transaction_cost
+        momentum_returns.name = "momentum_return"
+        return momentum_returns
 
     @staticmethod
     def _normalize_frame(frame: pd.DataFrame) -> pd.DataFrame:
