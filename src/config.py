@@ -49,6 +49,7 @@ class AlphaConfig:
     signals_path: Path
     metrics_path: Path
     diagnostics_path: Path
+    comparison_path: Path
     validation_fraction: float
     min_samples_per_regime: int
     augment_noise_std: float
@@ -142,6 +143,9 @@ def load_config(path: str | Path) -> AppConfig:
             metrics_path=Path(alpha_section.get("metrics_path", "data/processed/alpha_metrics.parquet")),
             diagnostics_path=Path(
                 alpha_section.get("diagnostics_path", "data/processed/alpha_diagnostics.parquet")
+            ),
+            comparison_path=Path(
+                alpha_section.get("comparison_path", "data/processed/alpha_model_comparison.parquet")
             ),
             validation_fraction=float(alpha_section.get("validation_fraction", 0.2)),
             min_samples_per_regime=int(alpha_section.get("min_samples_per_regime", 200)),
