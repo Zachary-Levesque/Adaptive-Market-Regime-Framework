@@ -250,6 +250,9 @@ python src/rl/agent.py
  
 # Run backtest
 python -m src.risk.build_phase4
+
+# Phase 4 will use the selected signal source from
+# data/processed/alpha_signal_selection.parquet when it exists.
  
 # Launch dashboard
 ./run-local.sh
