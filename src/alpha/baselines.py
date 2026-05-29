@@ -16,7 +16,7 @@ from torch.utils.data import Dataset, Subset
 @dataclass(frozen=True)
 class BaselineSpec:
     name: str
-    factory: Callable[[], "SequenceRegressor"]
+    factory: Callable[[int], "SequenceRegressor"]
 
 
 class SequenceRegressor:
@@ -97,7 +97,7 @@ def build_default_baseline_specs(random_state: int = 42, include_tree_models: bo
     specs = [
         BaselineSpec(
             name="ridge",
-            factory=lambda: SklearnSequenceRegressor(
+            factory=lambda _input_size: SklearnSequenceRegressor(
                 Pipeline(
                     [
                         ("scaler", StandardScaler()),
@@ -109,7 +109,7 @@ def build_default_baseline_specs(random_state: int = 42, include_tree_models: bo
         ),
         BaselineSpec(
             name="elastic_net",
-            factory=lambda: SklearnSequenceRegressor(
+            factory=lambda _input_size: SklearnSequenceRegressor(
                 Pipeline(
                     [
                         ("scaler", StandardScaler()),
