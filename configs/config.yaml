@@ -63,6 +63,11 @@ rl:
 risk:
   n_simulations: 10000
   confidence_level: 0.95
+  output_dir: "data/results"
+  transaction_cost_bps: 10.0
+  max_gross_exposure: 1.0
+  long_fraction: 0.2
+  short_fraction: 0.2
   stress_periods:
     gfc: ["2008-09-01", "2009-03-31"]
     covid: ["2020-02-19", "2020-03-23"]
