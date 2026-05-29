@@ -239,7 +239,7 @@ python src/alpha/lstm.py
 python src/rl/agent.py
  
 # Run backtest
-python src/risk/metrics.py
+python -m src.risk.build_phase4
  
 # Launch dashboard
 ./run-local.sh
