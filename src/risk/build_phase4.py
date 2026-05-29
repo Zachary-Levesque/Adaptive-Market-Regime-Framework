@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 import pandas as pd
 
@@ -15,6 +16,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default="configs/config.yaml", help="Path to the YAML config file.")
     parser.add_argument("--start", default=None, help="Optional inclusive backtest start date.")
     parser.add_argument("--end", default=None, help="Optional inclusive backtest end date.")
+    parser.add_argument(
+        "--signal-source",
+        default=None,
+        help="Optional path to a parquet file containing alpha signals to backtest.",
+    )
     parser.add_argument(
         "--transaction-cost-bps",
         type=float,
@@ -35,7 +41,8 @@ def main() -> None:
     config = load_config(args.config)
 
     returns = pd.read_parquet(config.data.processed_dir / "returns.parquet")
-    alpha_signals = pd.read_parquet(config.alpha.signals_path)
+    signal_path = resolve_signal_path(config, override=args.signal_source)
+    alpha_signals = pd.read_parquet(signal_path)
     regime_labels = pd.read_parquet(config.regime.output_dir / "regime_labels.parquet")
 
     backtester = AMRFBacktester(
@@ -56,6 +63,22 @@ def main() -> None:
     backtester.save(artifacts, output_dir=config.risk.output_dir)
 
     print(artifacts.performance_report.round(4).to_string())
+    print(f"\nSignals used: {signal_path}")
+
+
+def resolve_signal_path(config, override: str | None = None):
+    if override is not None:
+        return Path(override)
+
+    selection_path = config.alpha.selection_path
+    if selection_path.exists():
+        selection = pd.read_parquet(selection_path)
+        if not selection.empty and "signal_path" in selection.columns:
+            selected_path = Path(str(selection.iloc[0]["signal_path"]))
+            if selected_path.exists():
+                return selected_path
+
+    return config.alpha.signals_path
 
 
 if __name__ == "__main__":
