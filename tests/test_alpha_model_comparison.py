@@ -58,6 +58,8 @@ def test_alpha_model_comparison_builds_leaderboard_and_saves_artifacts(tmp_path:
         metrics_path=tmp_path / "processed" / "alpha_metrics.parquet",
         diagnostics_path=tmp_path / "processed" / "alpha_diagnostics.parquet",
         comparison_path=tmp_path / "processed" / "alpha_model_comparison.parquet",
+        signals_dir=tmp_path / "processed" / "alpha_signals",
+        selection_path=tmp_path / "processed" / "alpha_signal_selection.parquet",
         validation_fraction=0.25,
         min_samples_per_regime=8,
         augment_noise_std=0.0,
@@ -112,4 +114,8 @@ def test_alpha_model_comparison_builds_leaderboard_and_saves_artifacts(tmp_path:
     assert "ensemble" in artifacts.leaderboard.index
     assert (tmp_path / "processed" / "alpha_model_comparison.parquet").exists()
     assert (tmp_path / "processed" / "alpha_model_comparison_summary.parquet").exists()
+    assert (tmp_path / "processed" / "alpha_signal_selection.parquet").exists()
+    assert (tmp_path / "processed" / "alpha_signals" / "ridge.parquet").exists()
+    assert (tmp_path / "processed" / "alpha_signals" / "ensemble.parquet").exists()
+    assert artifacts.best_signal_path == tmp_path / "processed" / "alpha_signals" / f"{artifacts.best_model}.parquet"
     assert artifacts.best_model in {"ridge", "ensemble"}
