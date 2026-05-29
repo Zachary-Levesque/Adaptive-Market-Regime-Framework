@@ -152,15 +152,19 @@ Interactive React dashboard showing live regime state, current signals, portfoli
  
 ## Results
  
-| Metric | AMRF | Buy & Hold SPY | Momentum Baseline |
-|---|---|---|---|
-| Annual Return | ~18.4% | ~10.2% | ~12.1% |
-| Sharpe Ratio | ~1.84 | ~0.61 | ~0.79 |
-| Max Drawdown | ~-11.2% | ~-33.9% | ~-28.4% |
-| Calmar Ratio | ~1.64 | ~0.30 | ~0.43 |
-| Win Rate | ~61% | N/A | ~54% |
+Current local artifact snapshot from `data/results/performance_report.parquet`:
+
+| Metric | AMRF Strategy | Buy & Hold SPY | Equal Weight | 63D Momentum |
+|---|---|---|---|---|
+| Annual Return | 1.08% | 16.51% | 8.83% | -4.01% |
+| Sharpe Ratio | 0.15 | 1.04 | 0.54 | -0.21 |
+| Max Drawdown | -15.62% | -13.25% | -37.16% | -20.13% |
+| Calmar Ratio | 0.07 | 1.25 | 0.24 | -0.20 |
+| Win Rate | 50.83% | 53.31% | 54.02% | 47.99% |
  
-> Note: Results are from walk-forward backtest on 2000–2024 data. Past performance does not guarantee future results.
+Alpha diagnostics currently show weak but nonzero rank signal: mean IC 0.0150, mean rank IC 0.0106, IC positive on 52.07% of scored days. This means the next project step should improve alpha quality before adding reinforcement learning position sizing.
+
+> Note: Results are from the current local walk-forward artifacts, not final claimed performance. Past performance does not guarantee future results.
  
 ---
  
@@ -234,7 +238,10 @@ python src/regime/hmm.py
  
 # Train alpha models
 python src/alpha/lstm.py
- 
+
+# Diagnose alpha signal quality
+python -m src.alpha.build_diagnostics
+
 # Train RL agent
 python src/rl/agent.py
  
