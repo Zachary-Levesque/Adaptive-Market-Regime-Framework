@@ -34,5 +34,6 @@ def test_load_config_parses_data_paths(tmp_path: Path):
     assert config.regime.model_path == Path("src/regime/hmm_model.pkl")
     assert config.alpha.sequence_length == 60
     assert config.alpha.model_dir == Path("src/alpha/models")
+    assert config.alpha.diagnostics_path == Path("data/processed/alpha_diagnostics.parquet")
     assert config.risk.output_dir == Path("data/results")
     assert config.risk.transaction_cost_bps == 10.0
