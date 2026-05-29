@@ -55,6 +55,7 @@ def test_alpha_pipeline_build_persists_signals_and_models(tmp_path: Path):
         signals_path=tmp_path / "processed" / "alpha_signals.parquet",
         metrics_path=tmp_path / "processed" / "alpha_metrics.parquet",
         diagnostics_path=tmp_path / "processed" / "alpha_diagnostics.parquet",
+        comparison_path=tmp_path / "processed" / "alpha_model_comparison.parquet",
         validation_fraction=0.2,
         min_samples_per_regime=30,
         augment_noise_std=0.001,
