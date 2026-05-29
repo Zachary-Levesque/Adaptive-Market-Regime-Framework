@@ -39,6 +39,7 @@ regime:
 
 alpha:
   diagnostics_path: "data/processed/alpha_diagnostics.parquet"
+  comparison_path: "data/processed/alpha_model_comparison.parquet"
   lstm:
     hidden_size: 128
     num_layers: 2
