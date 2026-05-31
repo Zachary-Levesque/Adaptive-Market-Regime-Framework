@@ -147,7 +147,6 @@ class RegimeDataset(Dataset):
         feature_frame = feature_frame.sort_index()
 
         common_dates = feature_frame.index.intersection(normalized_returns.index).intersection(regime_labels.index)
-        common_dates = common_dates.intersection(normalized_factors.index)
         common_dates = common_dates.sort_values()
 
         if len(common_dates) <= sequence_length:
@@ -158,7 +157,7 @@ class RegimeDataset(Dataset):
             if "MARKET" in feature_frame.columns.get_level_values(0)
             else pd.DataFrame(index=common_dates)
         )
-        factor_block = normalized_factors.reindex(common_dates)
+        factor_block = normalized_factors.reindex(common_dates).ffill().fillna(0.0)
 
         tickers = [ticker for ticker in feature_frame.columns.get_level_values(0).unique() if ticker != "MARKET"]
         ticker_matrices: dict[str, np.ndarray] = {}
@@ -190,7 +189,8 @@ class RegimeDataset(Dataset):
             current_date = common_dates[end_pos]
             next_date = common_dates[end_pos + 1]
 
-            if regime_on_dates.loc[current_date] != target_regime:
+            current_regime = regime_on_dates.loc[current_date]
+            if pd.isna(current_regime) or int(current_regime) != target_regime:
                 continue
             if allowed_dates is not None and current_date not in allowed_dates:
                 continue
