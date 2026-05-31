@@ -57,6 +57,7 @@ def main() -> None:
             if args.transaction_cost_bps is not None
             else config.risk.transaction_cost_bps,
             benchmark=config.data.benchmark,
+            rebalance_interval_days=config.risk.rebalance_interval_days,
         ),
     )
     artifacts = backtester.run(start=args.start, end=args.end, stress_periods=config.risk.stress_periods)
