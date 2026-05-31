@@ -121,6 +121,7 @@ def test_alpha_model_comparison_builds_leaderboard_and_saves_artifacts(tmp_path:
     assert "projected_backtest_sharpe" in artifacts.leaderboard.columns
     assert "projected_total_return" in artifacts.leaderboard.columns
     assert "projected_is_tradable" in artifacts.leaderboard.columns
+    assert "projected_selection_eligible" in artifacts.leaderboard.columns
     assert (tmp_path / "processed" / "alpha_model_comparison.parquet").exists()
     assert (tmp_path / "processed" / "alpha_model_comparison_summary.parquet").exists()
     assert (tmp_path / "processed" / "alpha_signal_selection.parquet").exists()
@@ -367,21 +368,35 @@ def test_projected_backtest_gate_requires_positive_total_return(tmp_path: Path):
             },
         ]
     ).set_index("model")
-    returns = pd.DataFrame({"A": [0.0, 0.0]}, index=pd.date_range("2024-01-01", periods=2, freq="B"))
+    index = pd.date_range("2024-01-01", periods=5, freq="B")
+    returns = pd.DataFrame(
+        {
+            "A": [0.0, 0.01, -0.01, 0.01, -0.01],
+            "B": [0.0, -0.01, 0.01, -0.01, 0.01],
+        },
+        index=index,
+    )
     signals = {
-        "negative_return_model": pd.DataFrame({"A": [np.nan, np.nan]}, index=returns.index),
-        "cash": pd.DataFrame({"A": [np.nan, np.nan]}, index=returns.index),
+        "negative_return_model": pd.DataFrame({"A": [1.0] * len(index), "B": [-1.0] * len(index)}, index=index),
+        "cash": pd.DataFrame(np.nan, index=index, columns=returns.columns),
     }
     gated = comparator._attach_projected_backtest_stats(leaderboard, signals, returns)
     gated.loc["negative_return_model", "projected_backtest_sharpe"] = 1.0
     gated.loc["negative_return_model", "projected_total_return"] = -0.01
     gated.loc["negative_return_model", "projected_is_tradable"] = 0.0
+    gated.loc["negative_return_model", "projected_selection_eligible"] = 0.0
     gated = gated.sort_values(
-        ["projected_is_tradable", "projected_backtest_sharpe", "projected_total_return", "mean_net_sharpe"],
+        [
+            "projected_selection_eligible",
+            "projected_is_tradable",
+            "projected_backtest_sharpe",
+            "projected_total_return",
+            "mean_net_sharpe",
+        ],
         ascending=False,
     )
 
-    assert gated.index[0] == "negative_return_model"
+    assert gated.index[0] == "cash"
 
 
 def test_regime_selector_uses_positive_validated_model_by_regime(tmp_path: Path):
