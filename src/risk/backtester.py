@@ -28,6 +28,7 @@ class BacktestConfig:
     transaction_cost_bps: float = 10.0
     benchmark: str = "SPY"
     momentum_lookback: int = 63
+    rebalance_interval_days: int = 1
 
 
 @dataclass
@@ -64,7 +65,8 @@ class AMRFBacktester:
     ) -> BacktestArtifacts:
         returns, signals = self._aligned_inputs(start=start, end=end)
         raw_weights = self.construct_signal_weights(signals)
-        applied_weights = raw_weights.shift(1).reindex(returns.index).fillna(0.0)
+        target_weights = self.apply_rebalance_schedule(raw_weights)
+        applied_weights = target_weights.shift(1).reindex(returns.index).fillna(0.0)
         pnl_returns = returns.fillna(0.0)
         signal_coverage = signals.notna().mean(axis=1).reindex(returns.index).fillna(0.0)
         active_signal_count = signals.notna().sum(axis=1).reindex(returns.index).fillna(0).astype(int)
@@ -156,6 +158,28 @@ class AMRFBacktester:
 
         return weights
 
+    def apply_rebalance_schedule(self, weights: pd.DataFrame) -> pd.DataFrame:
+        """Hold target weights between scheduled rebalance dates."""
+        interval = max(1, int(self.config.rebalance_interval_days))
+        if interval <= 1 or weights.empty:
+            return weights
+
+        scheduled = pd.DataFrame(0.0, index=weights.index, columns=weights.columns)
+        current = pd.Series(0.0, index=weights.columns, dtype=float)
+        last_rebalance_pos: int | None = None
+
+        for pos, (date, row) in enumerate(weights.iterrows()):
+            has_signal = bool(row.abs().sum() > 0.0)
+            should_rebalance = has_signal and (
+                last_rebalance_pos is None or pos - last_rebalance_pos >= interval
+            )
+            if should_rebalance:
+                current = row.copy()
+                last_rebalance_pos = pos
+            scheduled.loc[date] = current
+
+        return scheduled
+
     def compare_benchmarks(self, daily_results: pd.DataFrame) -> pd.DataFrame:
         rows = {
             "strategy": self.metrics.summarize(daily_results["strategy_return"]),
@@ -236,6 +260,7 @@ class AMRFBacktester:
             raw=True,
         ) - 1.0
         momentum_weights = self.construct_signal_weights(momentum_scores)
+        momentum_weights = self.apply_rebalance_schedule(momentum_weights)
         applied_weights = momentum_weights.shift(1).reindex(pnl_asset_returns.index).fillna(0.0)
         gross_returns = (applied_weights * pnl_asset_returns).sum(axis=1)
         turnover = applied_weights.diff().abs().sum(axis=1).fillna(applied_weights.abs().sum(axis=1))
