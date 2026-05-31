@@ -66,6 +66,8 @@ class AMRFBacktester:
         raw_weights = self.construct_signal_weights(signals)
         applied_weights = raw_weights.shift(1).reindex(returns.index).fillna(0.0)
         pnl_returns = returns.fillna(0.0)
+        signal_coverage = signals.notna().mean(axis=1).reindex(returns.index).fillna(0.0)
+        active_signal_count = signals.notna().sum(axis=1).reindex(returns.index).fillna(0).astype(int)
 
         gross_returns = (applied_weights * pnl_returns).sum(axis=1)
         turnover = applied_weights.diff().abs().sum(axis=1).fillna(applied_weights.abs().sum(axis=1))
@@ -85,6 +87,10 @@ class AMRFBacktester:
                 "strategy_return_gross": gross_returns,
                 "turnover": turnover,
                 "transaction_cost": transaction_cost,
+                "gross_exposure": applied_weights.abs().sum(axis=1),
+                "net_exposure": applied_weights.sum(axis=1),
+                "signal_coverage": signal_coverage,
+                "active_signal_count": active_signal_count,
                 "strategy_return": strategy_returns,
                 "benchmark_return": benchmark_returns,
                 "equal_weight_return": equal_weight_returns,
