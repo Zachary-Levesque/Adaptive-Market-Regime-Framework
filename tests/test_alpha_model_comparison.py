@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.alpha.baselines import build_default_baseline_specs
+from src.alpha.baselines import WeightedTechnicalRegressor, build_default_baseline_specs
 from src.alpha.model_comparison import AlphaModelComparator
 from src.config import AlphaConfig, RegimeConfig
 
@@ -112,16 +112,21 @@ def test_alpha_model_comparison_builds_leaderboard_and_saves_artifacts(tmp_path:
     assert not artifacts.fold_metrics.empty
     assert "ridge" in artifacts.leaderboard.index
     assert "ensemble" in artifacts.leaderboard.index
+    assert "cash" in artifacts.leaderboard.index
     assert "ridge_last_step" in build_default_baseline_specs()[2].name
     assert "active_signal_days" in artifacts.leaderboard.columns
     assert "mean_signal_coverage" in artifacts.leaderboard.columns
+    assert "mean_net_sharpe" in artifacts.leaderboard.columns
+    assert "mean_transaction_cost" in artifacts.leaderboard.columns
+    assert "projected_backtest_sharpe" in artifacts.leaderboard.columns
+    assert "projected_total_return" in artifacts.leaderboard.columns
     assert (tmp_path / "processed" / "alpha_model_comparison.parquet").exists()
     assert (tmp_path / "processed" / "alpha_model_comparison_summary.parquet").exists()
     assert (tmp_path / "processed" / "alpha_signal_selection.parquet").exists()
     assert (tmp_path / "processed" / "alpha_signals" / "ridge.parquet").exists()
     assert (tmp_path / "processed" / "alpha_signals" / "ensemble.parquet").exists()
     assert artifacts.best_signal_path == tmp_path / "processed" / "alpha_signals" / f"{artifacts.best_model}.parquet"
-    assert artifacts.best_model in {"ridge", "ensemble"}
+    assert artifacts.best_model in {"ridge", "ensemble", "cash"}
 
 
 def test_optional_tree_baselines_accept_model_factory_input_size():
@@ -132,3 +137,229 @@ def test_optional_tree_baselines_accept_model_factory_input_size():
     for spec in tree_specs:
         model = spec.factory(3)
         assert model.name == spec.name
+
+
+def test_weighted_technical_regressor_uses_named_features_and_date_normalization():
+    class TinyDataset:
+        def __init__(self):
+            import torch
+
+            self.features = torch.tensor(
+                [
+                    [[0.0, 0.0], [1.0, 0.0]],
+                    [[0.0, 0.0], [-1.0, 0.0]],
+                    [[0.0, 0.0], [3.0, 0.0]],
+                ],
+                dtype=torch.float32,
+            )
+            self.targets = torch.zeros(3, dtype=torch.float32)
+            self.feature_names = ["tech__return_63d", "tech__volatility_21d"]
+            self.sample_dates = pd.DatetimeIndex(["2024-01-01", "2024-01-01", "2024-01-02"])
+
+        def __len__(self):
+            return len(self.features)
+
+    dataset = TinyDataset()
+    model = WeightedTechnicalRegressor(
+        name="technical_test",
+        feature_weights={"tech__return_63d": 1.0, "missing": 10.0},
+    )
+    model.fit(dataset, dataset, epochs=0)
+
+    predictions = model.predict_dataset(dataset)
+
+    assert np.allclose(predictions[:2], [1.0, -1.0])
+    assert predictions[2] == 3.0
+
+
+def test_cash_candidate_wins_when_all_models_have_negative_validation_sharpe(tmp_path: Path):
+    comparator = AlphaModelComparator(
+        alpha_config=_minimal_alpha_config(tmp_path),
+        regime_config=_minimal_regime_config(tmp_path),
+        baseline_specs=[],
+    )
+    leaderboard = pd.DataFrame(
+        [
+            {
+                "model": "weak_model",
+                "n_rows": 1,
+                "n_folds": 1,
+                "n_regimes": 1,
+                "mean_sharpe": -0.5,
+                "median_sharpe": -0.5,
+                "mean_net_sharpe": -1.0,
+                "mean_ic": 0.1,
+                "mean_rank_ic": 0.1,
+                "mean_hit_rate": 0.55,
+                "mean_train_size": 10.0,
+                "mean_test_size": 4.0,
+            }
+        ]
+    ).set_index("model")
+
+    guarded = comparator._with_cash_candidate(leaderboard)
+
+    assert guarded.index[0] == "cash"
+    assert guarded.loc["cash", "mean_sharpe"] == 0.0
+    assert guarded.loc["cash", "mean_net_sharpe"] == 0.0
+
+
+def test_trading_stats_include_turnover_costs(tmp_path: Path):
+    comparator = AlphaModelComparator(
+        alpha_config=_minimal_alpha_config(tmp_path),
+        regime_config=_minimal_regime_config(tmp_path),
+        baseline_specs=[],
+        transaction_cost_bps=10.0,
+        max_gross_exposure=1.0,
+        long_fraction=0.5,
+        short_fraction=0.5,
+    )
+
+    stats = comparator._compute_trading_stats(
+        predictions=np.array([1.0, -1.0, 1.0, -1.0], dtype=np.float32),
+        actuals=np.array([0.01, -0.01, 0.02, -0.02], dtype=np.float32),
+        dates=pd.DatetimeIndex(["2024-01-01", "2024-01-01", "2024-01-02", "2024-01-02"]),
+        tickers=["A", "B", "A", "B"],
+    )
+
+    assert stats["mean_turnover"] > 0.0
+    assert stats["mean_transaction_cost"] > 0.0
+    assert stats["net_sharpe"] < stats["gross_sharpe"]
+
+
+def test_trading_stats_respect_rebalance_interval(tmp_path: Path):
+    daily = AlphaModelComparator(
+        alpha_config=_minimal_alpha_config(tmp_path),
+        regime_config=_minimal_regime_config(tmp_path),
+        baseline_specs=[],
+        transaction_cost_bps=10.0,
+        long_fraction=0.5,
+        short_fraction=0.5,
+        rebalance_interval_days=1,
+    )
+    held = AlphaModelComparator(
+        alpha_config=_minimal_alpha_config(tmp_path),
+        regime_config=_minimal_regime_config(tmp_path),
+        baseline_specs=[],
+        transaction_cost_bps=10.0,
+        long_fraction=0.5,
+        short_fraction=0.5,
+        rebalance_interval_days=3,
+    )
+    predictions = np.array([1.0, -1.0, -1.0, 1.0, 1.0, -1.0], dtype=np.float32)
+    actuals = np.array([0.01, -0.01, -0.01, 0.01, 0.01, -0.01], dtype=np.float32)
+    dates = pd.DatetimeIndex(
+        ["2024-01-01", "2024-01-01", "2024-01-02", "2024-01-02", "2024-01-03", "2024-01-03"]
+    )
+    tickers = ["A", "B", "A", "B", "A", "B"]
+
+    daily_stats = daily._compute_trading_stats(predictions, actuals, dates, tickers)
+    held_stats = held._compute_trading_stats(predictions, actuals, dates, tickers)
+
+    assert held_stats["mean_turnover"] < daily_stats["mean_turnover"]
+
+
+def test_projected_backtest_gate_can_select_cash_over_positive_fold_model(tmp_path: Path):
+    comparator = AlphaModelComparator(
+        alpha_config=_minimal_alpha_config(tmp_path),
+        regime_config=_minimal_regime_config(tmp_path),
+        baseline_specs=[],
+        transaction_cost_bps=10.0,
+        long_fraction=0.5,
+        short_fraction=0.5,
+    )
+    index = pd.date_range("2024-01-01", periods=5, freq="B")
+    returns = pd.DataFrame(
+        {
+            "A": [0.0, -0.01, -0.01, -0.01, -0.01],
+            "B": [0.0, 0.01, 0.01, 0.01, 0.01],
+        },
+        index=index,
+    )
+    losing_signals = pd.DataFrame({"A": [1.0] * len(index), "B": [-1.0] * len(index)}, index=index)
+    signal_frames = {
+        "fold_winner": losing_signals,
+        "cash": pd.DataFrame(np.nan, index=index, columns=returns.columns),
+    }
+    leaderboard = pd.DataFrame(
+        [
+            {
+                "model": "fold_winner",
+                "n_rows": 1,
+                "n_folds": 1,
+                "n_regimes": 1,
+                "mean_sharpe": 1.0,
+                "median_sharpe": 1.0,
+                "mean_net_sharpe": 1.0,
+                "mean_ic": 0.0,
+                "mean_rank_ic": 0.0,
+                "mean_hit_rate": 0.5,
+                "mean_turnover": 0.0,
+                "mean_transaction_cost": 0.0,
+                "mean_train_size": 10.0,
+                "mean_test_size": 4.0,
+            },
+            {
+                "model": "cash",
+                "n_rows": 0,
+                "n_folds": 0,
+                "n_regimes": 0,
+                "mean_sharpe": 0.0,
+                "median_sharpe": 0.0,
+                "mean_net_sharpe": 0.0,
+                "mean_ic": 0.0,
+                "mean_rank_ic": 0.0,
+                "mean_hit_rate": 0.0,
+                "mean_turnover": 0.0,
+                "mean_transaction_cost": 0.0,
+                "mean_train_size": 0.0,
+                "mean_test_size": 0.0,
+            },
+        ]
+    ).set_index("model")
+
+    gated = comparator._attach_projected_backtest_stats(leaderboard, signal_frames, returns)
+
+    assert gated.index[0] == "cash"
+    assert gated.loc["fold_winner", "projected_total_return"] < 0.0
+
+
+def _minimal_alpha_config(tmp_path: Path) -> AlphaConfig:
+    return AlphaConfig(
+        hidden_size=8,
+        num_layers=1,
+        dropout=0.1,
+        sequence_length=4,
+        batch_size=8,
+        epochs=1,
+        learning_rate=0.001,
+        train_window=10,
+        test_window=4,
+        step_size=4,
+        model_dir=tmp_path / "models",
+        signals_path=tmp_path / "processed" / "alpha_signals.parquet",
+        metrics_path=tmp_path / "processed" / "alpha_metrics.parquet",
+        diagnostics_path=tmp_path / "processed" / "alpha_diagnostics.parquet",
+        comparison_path=tmp_path / "processed" / "alpha_model_comparison.parquet",
+        signals_dir=tmp_path / "processed" / "alpha_signals",
+        selection_path=tmp_path / "processed" / "alpha_signal_selection.parquet",
+        validation_fraction=0.25,
+        min_samples_per_regime=8,
+        augment_noise_std=0.0,
+        weight_decay=1e-5,
+        patience=2,
+        device="cpu",
+    )
+
+
+def _minimal_regime_config(tmp_path: Path) -> RegimeConfig:
+    return RegimeConfig(
+        n_regimes=4,
+        n_iter=10,
+        covariance_type="full",
+        regime_names={0: "Bull Trending", 1: "Low-Vol Compression", 2: "Bear Trending", 3: "High-Vol Crisis"},
+        n_restarts=1,
+        model_path=tmp_path / "regime" / "hmm.pkl",
+        output_dir=tmp_path / "regime",
+        chart_path=tmp_path / "regime" / "chart.png",
+    )
