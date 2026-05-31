@@ -150,3 +150,36 @@ def test_backtester_momentum_baseline_excludes_benchmark_when_possible():
 
     assert artifacts.daily_results["momentum_return"].max() <= 0.01
     assert np.isclose(artifacts.daily_results["momentum_return"].iloc[-1], 0.01)
+
+
+def test_backtester_holds_weights_between_rebalance_dates():
+    index = pd.date_range("2024-01-01", periods=5, freq="B")
+    returns = pd.DataFrame(
+        {
+            "A": [0.0, 0.01, 0.01, 0.01, 0.01],
+            "B": [0.0, -0.01, -0.01, -0.01, -0.01],
+        },
+        index=index,
+    )
+    signals = pd.DataFrame(
+        {
+            "A": [1.0, -1.0, -1.0, -1.0, -1.0],
+            "B": [-1.0, 1.0, 1.0, 1.0, 1.0],
+        },
+        index=index,
+    )
+
+    artifacts = AMRFBacktester(
+        returns=returns,
+        alpha_signals=signals,
+        config=BacktestConfig(
+            long_fraction=0.5,
+            short_fraction=0.5,
+            transaction_cost_bps=0.0,
+            rebalance_interval_days=3,
+        ),
+    ).run()
+
+    assert artifacts.weights.loc[index[1], "A"] > 0
+    assert artifacts.weights.loc[index[2], "A"] > 0
+    assert artifacts.weights.loc[index[4], "A"] < 0
