@@ -52,3 +52,43 @@ def test_regime_dataset_builds_sequences_and_augments():
     assert dataset.features.shape[1] == 10
     assert dataset.input_size > 0
     assert set(dataset.sample_tickers).issubset({"AAA", "BBB"})
+
+
+def test_regime_dataset_does_not_drop_dates_before_factor_history():
+    features, returns, factors, regime_labels = _alpha_inputs()
+    late_factors = factors.iloc[-20:]
+
+    dataset = RegimeDataset(
+        features=features,
+        returns=returns,
+        regime_labels=regime_labels,
+        target_regime=0,
+        factors=late_factors,
+        sequence_length=10,
+        min_samples=0,
+        augment_noise_std=0.0,
+    )
+
+    assert len(dataset) > 0
+    assert dataset.sample_dates.min() < late_factors.index.min()
+    assert np.isfinite(dataset.features.numpy()).all()
+
+
+def test_regime_dataset_skips_missing_regime_labels():
+    features, returns, factors, regime_labels = _alpha_inputs()
+    nullable_labels = regime_labels.copy()
+    nullable_labels.iloc[:5, 0] = pd.NA
+
+    dataset = RegimeDataset(
+        features=features,
+        returns=returns,
+        regime_labels=nullable_labels.astype({"regime": "Int64"}),
+        target_regime=0,
+        factors=factors,
+        sequence_length=10,
+        min_samples=0,
+        augment_noise_std=0.0,
+    )
+
+    assert len(dataset) > 0
+    assert dataset.sample_dates.min() > nullable_labels.index[:5].max()
