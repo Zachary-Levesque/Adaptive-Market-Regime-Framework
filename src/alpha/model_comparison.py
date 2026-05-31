@@ -46,6 +46,7 @@ class AlphaModelComparator:
         long_fraction: float = 0.2,
         short_fraction: float = 0.2,
         rebalance_interval_days: int = 1,
+        min_regime_selection_folds: int = 3,
     ) -> None:
         self.alpha_config = alpha_config
         self.regime_config = regime_config
@@ -55,6 +56,7 @@ class AlphaModelComparator:
         self.long_fraction = long_fraction
         self.short_fraction = short_fraction
         self.rebalance_interval_days = max(1, int(rebalance_interval_days))
+        self.min_regime_selection_folds = max(1, int(min_regime_selection_folds))
 
     def build(
         self,
@@ -121,7 +123,9 @@ class AlphaModelComparator:
                     signal_frames[model_name] = signal_frames[model_name].combine_first(regime_signal_frame)
 
         fold_metrics = pd.concat(fold_frames, ignore_index=True) if fold_frames else pd.DataFrame()
+        signal_frames = self._with_regime_selector_signal(signal_frames, fold_metrics, regime_series)
         leaderboard = self._summarize(fold_metrics)
+        leaderboard = self._with_regime_selector_candidate(leaderboard, fold_metrics)
         leaderboard = self._with_cash_candidate(leaderboard)
         leaderboard = self._attach_signal_stats(leaderboard, signal_frames)
         leaderboard = self._attach_projected_backtest_stats(leaderboard, signal_frames, returns)
@@ -319,6 +323,105 @@ class AlphaModelComparator:
         leaderboard = leaderboard.sort_values(["mean_net_sharpe", "mean_sharpe", "mean_ic"], ascending=False)
         return leaderboard
 
+    def _with_regime_selector_signal(
+        self,
+        signal_frames: dict[str, pd.DataFrame],
+        fold_metrics: pd.DataFrame,
+        regime_series: pd.Series,
+    ) -> dict[str, pd.DataFrame]:
+        if fold_metrics.empty:
+            return signal_frames
+
+        selections = self._select_models_by_regime(fold_metrics)
+        if not selections:
+            return signal_frames
+
+        template = next(iter(signal_frames.values()))
+        composite = pd.DataFrame(np.nan, index=template.index, columns=template.columns, dtype=float)
+        aligned_regimes = regime_series.reindex(composite.index)
+        for regime, model_name in selections.items():
+            if model_name not in signal_frames:
+                continue
+            mask = aligned_regimes.eq(regime).fillna(False)
+            composite.loc[mask] = signal_frames[model_name].loc[mask]
+
+        signal_frames = dict(signal_frames)
+        signal_frames["regime_selector"] = composite
+        return signal_frames
+
+    def _with_regime_selector_candidate(self, leaderboard: pd.DataFrame, fold_metrics: pd.DataFrame) -> pd.DataFrame:
+        if fold_metrics.empty:
+            return leaderboard
+
+        selections = self._select_models_by_regime(fold_metrics)
+        if not selections:
+            return leaderboard
+
+        selected_groups = []
+        for regime, model_name in selections.items():
+            group = fold_metrics[(fold_metrics["regime"] == regime) & (fold_metrics["model"] == model_name)]
+            if not group.empty:
+                selected_groups.append(group)
+        if not selected_groups:
+            return leaderboard
+
+        selected = pd.concat(selected_groups, ignore_index=True)
+        row = {
+            "n_rows": int(len(selected)),
+            "n_folds": int(selected["fold"].nunique()) if "fold" in selected.columns else int(len(selected)),
+            "n_regimes": int(selected["regime"].nunique()) if "regime" in selected.columns else 0,
+            "mean_sharpe": float(selected["sharpe"].mean()) if "sharpe" in selected.columns else 0.0,
+            "median_sharpe": float(selected["sharpe"].median()) if "sharpe" in selected.columns else 0.0,
+            "mean_net_sharpe": float(selected["net_sharpe"].mean()) if "net_sharpe" in selected.columns else 0.0,
+            "mean_ic": float(selected["ic"].mean()) if "ic" in selected.columns else 0.0,
+            "mean_rank_ic": float(selected["rank_ic"].mean()) if "rank_ic" in selected.columns else 0.0,
+            "mean_hit_rate": float(selected["hit_rate"].mean()) if "hit_rate" in selected.columns else 0.0,
+            "mean_turnover": float(selected["mean_turnover"].mean()) if "mean_turnover" in selected.columns else 0.0,
+            "mean_transaction_cost": float(selected["mean_transaction_cost"].mean())
+            if "mean_transaction_cost" in selected.columns
+            else 0.0,
+            "mean_train_size": float(selected["n_train"].mean()) if "n_train" in selected.columns else 0.0,
+            "mean_test_size": float(selected["n_test"].mean()) if "n_test" in selected.columns else 0.0,
+            "selected_regime_models": ", ".join(
+                f"{int(regime)}:{model_name}" for regime, model_name in sorted(selections.items())
+            ),
+        }
+        regime_selector = pd.DataFrame([row], index=pd.Index(["regime_selector"], name="model"))
+        combined = regime_selector if leaderboard.empty else pd.concat([leaderboard, regime_selector], sort=False)
+        return combined.sort_values(["mean_net_sharpe", "mean_sharpe", "mean_ic"], ascending=False)
+
+    def _select_models_by_regime(self, fold_metrics: pd.DataFrame) -> dict[int, str]:
+        if fold_metrics.empty:
+            return {}
+
+        selections: dict[int, str] = {}
+        for regime, regime_group in fold_metrics.groupby("regime"):
+            rows = []
+            for model_name, group in regime_group.groupby("model"):
+                n_folds = int(group["fold"].nunique()) if "fold" in group.columns else int(len(group))
+                mean_net_sharpe = float(group["net_sharpe"].mean()) if "net_sharpe" in group.columns else 0.0
+                mean_sharpe = float(group["sharpe"].mean()) if "sharpe" in group.columns else 0.0
+                mean_ic = float(group["ic"].mean()) if "ic" in group.columns else 0.0
+                if n_folds < self.min_regime_selection_folds or mean_net_sharpe <= 0.0:
+                    continue
+                rows.append(
+                    {
+                        "model": model_name,
+                        "n_folds": n_folds,
+                        "mean_net_sharpe": mean_net_sharpe,
+                        "mean_sharpe": mean_sharpe,
+                        "mean_ic": mean_ic,
+                    }
+                )
+            if rows:
+                ranked = pd.DataFrame(rows).sort_values(
+                    ["mean_net_sharpe", "mean_sharpe", "mean_ic"],
+                    ascending=False,
+                )
+                selections[int(regime)] = str(ranked.iloc[0]["model"])
+
+        return selections
+
     @staticmethod
     def _with_cash_candidate(leaderboard: pd.DataFrame) -> pd.DataFrame:
         cash_row = pd.DataFrame(
@@ -463,9 +566,12 @@ class AlphaModelComparator:
             stats = self._project_signal_backtest(signals, returns)
             for key, value in stats.items():
                 enriched.loc[model_name, key] = value
+            enriched.loc[model_name, "projected_is_tradable"] = float(
+                stats["projected_backtest_sharpe"] > 0.0 and stats["projected_total_return"] > 0.0
+            )
 
         return enriched.sort_values(
-            ["projected_backtest_sharpe", "projected_total_return", "mean_net_sharpe"],
+            ["projected_is_tradable", "projected_backtest_sharpe", "projected_total_return", "mean_net_sharpe"],
             ascending=False,
         )
 
