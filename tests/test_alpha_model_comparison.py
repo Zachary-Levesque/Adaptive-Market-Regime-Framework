@@ -112,6 +112,9 @@ def test_alpha_model_comparison_builds_leaderboard_and_saves_artifacts(tmp_path:
     assert not artifacts.fold_metrics.empty
     assert "ridge" in artifacts.leaderboard.index
     assert "ensemble" in artifacts.leaderboard.index
+    assert "ridge_last_step" in build_default_baseline_specs()[2].name
+    assert "active_signal_days" in artifacts.leaderboard.columns
+    assert "mean_signal_coverage" in artifacts.leaderboard.columns
     assert (tmp_path / "processed" / "alpha_model_comparison.parquet").exists()
     assert (tmp_path / "processed" / "alpha_model_comparison_summary.parquet").exists()
     assert (tmp_path / "processed" / "alpha_signal_selection.parquet").exists()
@@ -119,3 +122,13 @@ def test_alpha_model_comparison_builds_leaderboard_and_saves_artifacts(tmp_path:
     assert (tmp_path / "processed" / "alpha_signals" / "ensemble.parquet").exists()
     assert artifacts.best_signal_path == tmp_path / "processed" / "alpha_signals" / f"{artifacts.best_model}.parquet"
     assert artifacts.best_model in {"ridge", "ensemble"}
+
+
+def test_optional_tree_baselines_accept_model_factory_input_size():
+    specs = build_default_baseline_specs(include_tree_models=True)
+    tree_specs = [spec for spec in specs if spec.name in {"random_forest", "gradient_boosting"}]
+
+    assert len(tree_specs) == 2
+    for spec in tree_specs:
+        model = spec.factory(3)
+        assert model.name == spec.name
