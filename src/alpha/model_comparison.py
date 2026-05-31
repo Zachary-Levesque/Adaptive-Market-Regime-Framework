@@ -111,6 +111,7 @@ class AlphaModelComparator:
 
         fold_metrics = pd.concat(fold_frames, ignore_index=True) if fold_frames else pd.DataFrame()
         leaderboard = self._summarize(fold_metrics)
+        leaderboard = self._attach_signal_stats(leaderboard, signal_frames)
         signal_paths = self.save(signal_frames, fold_metrics, leaderboard)
         best_model = str(leaderboard.index[0]) if not leaderboard.empty else ""
         best_signal_path = signal_paths.get(best_model)
@@ -288,3 +289,26 @@ class AlphaModelComparator:
         leaderboard = pd.DataFrame(rows).set_index("model")
         leaderboard = leaderboard.sort_values(["mean_sharpe", "mean_ic", "mean_hit_rate"], ascending=False)
         return leaderboard
+
+    @staticmethod
+    def _attach_signal_stats(leaderboard: pd.DataFrame, signal_frames: dict[str, pd.DataFrame]) -> pd.DataFrame:
+        if leaderboard.empty:
+            return leaderboard
+
+        enriched = leaderboard.copy()
+        for model_name, frame in signal_frames.items():
+            if model_name not in enriched.index:
+                continue
+
+            active_rows = frame.notna().any(axis=1)
+            active_days = int(active_rows.sum())
+            enriched.loc[model_name, "active_signal_days"] = active_days
+            enriched.loc[model_name, "mean_signal_coverage"] = float(frame.notna().mean().mean()) if not frame.empty else 0.0
+            enriched.loc[model_name, "first_signal_date"] = (
+                str(frame.index[active_rows][0].date()) if active_days else ""
+            )
+            enriched.loc[model_name, "last_signal_date"] = (
+                str(frame.index[active_rows][-1].date()) if active_days else ""
+            )
+
+        return enriched
