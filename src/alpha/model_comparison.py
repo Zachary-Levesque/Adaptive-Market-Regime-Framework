@@ -207,7 +207,6 @@ class AlphaModelComparator:
         regime_signal_frame = pd.DataFrame(np.nan, index=returns.index, columns=returns.columns, dtype=float)
         fold_rows: list[dict[str, float | int]] = []
         usable_dates = technical_features.index.intersection(returns.index).intersection(regime_series.index)
-        usable_dates = usable_dates.intersection(factors.index if factors is not None else returns.index)
         splits = validator.generate_splits(usable_dates)
 
         for fold, (train_dates, test_dates) in enumerate(splits):
