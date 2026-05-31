@@ -45,6 +45,11 @@ def main() -> None:
         config.alpha,
         config.regime,
         baseline_specs=build_default_baseline_specs(include_tree_models=args.include_tree_baselines),
+        transaction_cost_bps=config.risk.transaction_cost_bps,
+        max_gross_exposure=config.risk.max_gross_exposure,
+        long_fraction=config.risk.long_fraction,
+        short_fraction=config.risk.short_fraction,
+        rebalance_interval_days=config.risk.rebalance_interval_days,
     )
     artifacts = comparator.build(
         technical_features=technical_features,
