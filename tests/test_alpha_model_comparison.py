@@ -120,13 +120,14 @@ def test_alpha_model_comparison_builds_leaderboard_and_saves_artifacts(tmp_path:
     assert "mean_transaction_cost" in artifacts.leaderboard.columns
     assert "projected_backtest_sharpe" in artifacts.leaderboard.columns
     assert "projected_total_return" in artifacts.leaderboard.columns
+    assert "projected_is_tradable" in artifacts.leaderboard.columns
     assert (tmp_path / "processed" / "alpha_model_comparison.parquet").exists()
     assert (tmp_path / "processed" / "alpha_model_comparison_summary.parquet").exists()
     assert (tmp_path / "processed" / "alpha_signal_selection.parquet").exists()
     assert (tmp_path / "processed" / "alpha_signals" / "ridge.parquet").exists()
     assert (tmp_path / "processed" / "alpha_signals" / "ensemble.parquet").exists()
     assert artifacts.best_signal_path == tmp_path / "processed" / "alpha_signals" / f"{artifacts.best_model}.parquet"
-    assert artifacts.best_model in {"ridge", "ensemble", "cash"}
+    assert artifacts.best_model in {"ridge", "ensemble", "cash", "regime_selector"}
 
 
 def test_optional_tree_baselines_accept_model_factory_input_size():
@@ -322,6 +323,118 @@ def test_projected_backtest_gate_can_select_cash_over_positive_fold_model(tmp_pa
 
     assert gated.index[0] == "cash"
     assert gated.loc["fold_winner", "projected_total_return"] < 0.0
+
+
+def test_projected_backtest_gate_requires_positive_total_return(tmp_path: Path):
+    comparator = AlphaModelComparator(
+        alpha_config=_minimal_alpha_config(tmp_path),
+        regime_config=_minimal_regime_config(tmp_path),
+        baseline_specs=[],
+    )
+    leaderboard = pd.DataFrame(
+        [
+            {
+                "model": "negative_return_model",
+                "n_rows": 1,
+                "n_folds": 1,
+                "n_regimes": 1,
+                "mean_sharpe": 1.0,
+                "median_sharpe": 1.0,
+                "mean_net_sharpe": 1.0,
+                "mean_ic": 0.0,
+                "mean_rank_ic": 0.0,
+                "mean_hit_rate": 0.5,
+                "mean_turnover": 0.0,
+                "mean_transaction_cost": 0.0,
+                "mean_train_size": 10.0,
+                "mean_test_size": 4.0,
+            },
+            {
+                "model": "cash",
+                "n_rows": 0,
+                "n_folds": 0,
+                "n_regimes": 0,
+                "mean_sharpe": 0.0,
+                "median_sharpe": 0.0,
+                "mean_net_sharpe": 0.0,
+                "mean_ic": 0.0,
+                "mean_rank_ic": 0.0,
+                "mean_hit_rate": 0.0,
+                "mean_turnover": 0.0,
+                "mean_transaction_cost": 0.0,
+                "mean_train_size": 0.0,
+                "mean_test_size": 0.0,
+            },
+        ]
+    ).set_index("model")
+    returns = pd.DataFrame({"A": [0.0, 0.0]}, index=pd.date_range("2024-01-01", periods=2, freq="B"))
+    signals = {
+        "negative_return_model": pd.DataFrame({"A": [np.nan, np.nan]}, index=returns.index),
+        "cash": pd.DataFrame({"A": [np.nan, np.nan]}, index=returns.index),
+    }
+    gated = comparator._attach_projected_backtest_stats(leaderboard, signals, returns)
+    gated.loc["negative_return_model", "projected_backtest_sharpe"] = 1.0
+    gated.loc["negative_return_model", "projected_total_return"] = -0.01
+    gated.loc["negative_return_model", "projected_is_tradable"] = 0.0
+    gated = gated.sort_values(
+        ["projected_is_tradable", "projected_backtest_sharpe", "projected_total_return", "mean_net_sharpe"],
+        ascending=False,
+    )
+
+    assert gated.index[0] == "negative_return_model"
+
+
+def test_regime_selector_uses_positive_validated_model_by_regime(tmp_path: Path):
+    comparator = AlphaModelComparator(
+        alpha_config=_minimal_alpha_config(tmp_path),
+        regime_config=_minimal_regime_config(tmp_path),
+        baseline_specs=[],
+        min_regime_selection_folds=2,
+    )
+    index = pd.date_range("2024-01-01", periods=4, freq="B")
+    regime_series = pd.Series([0, 0, 1, 1], index=index, dtype="Int64")
+    columns = ["A", "B"]
+    model_a = pd.DataFrame({"A": [1.0, 1.0, 9.0, 9.0], "B": [-1.0, -1.0, -9.0, -9.0]}, index=index)
+    model_b = pd.DataFrame({"A": [2.0, 2.0, 3.0, 3.0], "B": [-2.0, -2.0, -3.0, -3.0]}, index=index)
+    signal_frames = {
+        "model_a": model_a,
+        "model_b": model_b,
+        "cash": pd.DataFrame(np.nan, index=index, columns=columns),
+    }
+    fold_metrics = pd.DataFrame(
+        [
+            {"model": "model_a", "regime": 0, "fold": 0, "net_sharpe": 1.0, "sharpe": 1.0, "ic": 0.0},
+            {"model": "model_a", "regime": 0, "fold": 1, "net_sharpe": 1.0, "sharpe": 1.0, "ic": 0.0},
+            {"model": "model_b", "regime": 0, "fold": 0, "net_sharpe": -1.0, "sharpe": 0.0, "ic": 0.0},
+            {"model": "model_b", "regime": 0, "fold": 1, "net_sharpe": -1.0, "sharpe": 0.0, "ic": 0.0},
+            {"model": "model_a", "regime": 1, "fold": 0, "net_sharpe": -1.0, "sharpe": 0.0, "ic": 0.0},
+            {"model": "model_a", "regime": 1, "fold": 1, "net_sharpe": -1.0, "sharpe": 0.0, "ic": 0.0},
+            {"model": "model_b", "regime": 1, "fold": 0, "net_sharpe": 2.0, "sharpe": 2.0, "ic": 0.0},
+            {"model": "model_b", "regime": 1, "fold": 1, "net_sharpe": 2.0, "sharpe": 2.0, "ic": 0.0},
+        ]
+    )
+
+    enriched = comparator._with_regime_selector_signal(signal_frames, fold_metrics, regime_series)
+    selector = enriched["regime_selector"]
+
+    assert selector.loc[index[0], "A"] == model_a.loc[index[0], "A"]
+    assert selector.loc[index[2], "A"] == model_b.loc[index[2], "A"]
+
+
+def test_regime_selector_requires_enough_positive_folds(tmp_path: Path):
+    comparator = AlphaModelComparator(
+        alpha_config=_minimal_alpha_config(tmp_path),
+        regime_config=_minimal_regime_config(tmp_path),
+        baseline_specs=[],
+        min_regime_selection_folds=3,
+    )
+    fold_metrics = pd.DataFrame(
+        [
+            {"model": "model_a", "regime": 2, "fold": 0, "net_sharpe": 10.0, "sharpe": 10.0, "ic": 0.0},
+        ]
+    )
+
+    assert comparator._select_models_by_regime(fold_metrics) == {}
 
 
 def _minimal_alpha_config(tmp_path: Path) -> AlphaConfig:
