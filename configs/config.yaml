@@ -72,6 +72,7 @@ risk:
   max_gross_exposure: 1.0
   long_fraction: 0.2
   short_fraction: 0.2
+  rebalance_interval_days: 5
   stress_periods:
     gfc: ["2008-09-01", "2009-03-31"]
     covid: ["2020-02-19", "2020-03-23"]
