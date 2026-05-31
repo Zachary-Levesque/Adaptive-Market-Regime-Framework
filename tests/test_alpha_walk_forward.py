@@ -14,3 +14,12 @@ def test_walk_forward_generate_splits_orders_dates_without_overlap():
     assert len(train_dates) == 120
     assert len(test_dates) == 60
     assert train_dates.max() < test_dates.min()
+
+
+def test_walk_forward_generate_splits_expands_when_more_dates_are_available():
+    dates = pd.date_range("2021-01-01", periods=1000, freq="B")
+    validator = WalkForwardValidator(train_window=252, test_window=63, step_size=63)
+
+    splits = validator.generate_splits(dates)
+
+    assert len(splits) > 1
