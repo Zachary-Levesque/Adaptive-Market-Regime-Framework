@@ -45,6 +45,12 @@ def test_backtester_applies_prior_day_weights_and_transaction_costs():
     assert "momentum_63d" in artifacts.performance_report.index
     assert "equal_weight_return" in artifacts.daily_results.columns
     assert "momentum_return" in artifacts.daily_results.columns
+    assert "gross_exposure" in artifacts.daily_results.columns
+    assert "net_exposure" in artifacts.daily_results.columns
+    assert "signal_coverage" in artifacts.daily_results.columns
+    assert "active_signal_count" in artifacts.daily_results.columns
+    assert np.isclose(artifacts.daily_results.loc[index[0], "signal_coverage"], 1.0)
+    assert artifacts.daily_results.loc[index[0], "active_signal_count"] == 3
 
 
 def test_backtester_saves_outputs(tmp_path):
