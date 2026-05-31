@@ -108,6 +108,41 @@ class SklearnSequenceSummaryRegressor(SklearnSequenceRegressor):
         return summary.astype(np.float32, copy=False), targets.astype(np.float32, copy=False)
 
 
+class WeightedTechnicalRegressor(SequenceRegressor):
+    """Deterministic technical-alpha baseline using named latest-step features."""
+
+    def __init__(self, name: str, feature_weights: dict[str, float], cross_sectional_normalize: bool = True) -> None:
+        self.name = name
+        self.feature_weights = dict(feature_weights)
+        self.cross_sectional_normalize = cross_sectional_normalize
+        self._is_fitted = False
+
+    def fit(self, train_dataset: Dataset, val_dataset: Dataset, epochs: int, device: str = "cpu") -> "WeightedTechnicalRegressor":
+        self._is_fitted = True
+        return self
+
+    def predict_dataset(self, dataset: Dataset, device: str = "cpu") -> np.ndarray:
+        if not self._is_fitted:
+            raise RuntimeError(f"{self.name} must be fit before prediction.")
+
+        features_tensor, _ = _resolve_dataset_tensors(dataset)
+        features = features_tensor.detach().cpu().numpy()
+        if len(features) == 0:
+            return np.array([], dtype=np.float32)
+
+        feature_names = _resolve_feature_names(dataset)
+        latest = features[:, -1, :]
+        scores = np.zeros(len(features), dtype=np.float32)
+        for feature_name, weight in self.feature_weights.items():
+            if feature_name in feature_names:
+                scores += float(weight) * latest[:, feature_names.index(feature_name)]
+
+        if self.cross_sectional_normalize:
+            scores = _normalize_by_date(scores, _resolve_sample_dates(dataset))
+
+        return scores.astype(np.float32, copy=False)
+
+
 class DummyMeanRegressor:
     """Fallback regressor used when a baseline cannot be fit robustly."""
 
@@ -187,6 +222,46 @@ def build_default_baseline_specs(random_state: int = 42, include_tree_models: bo
                 name="ridge_summary",
             ),
         ),
+        BaselineSpec(
+            name="technical_trend",
+            factory=lambda _input_size: WeightedTechnicalRegressor(
+                name="technical_trend",
+                feature_weights={
+                    "tech__momentum_12_1": 0.35,
+                    "tech__return_63d": 0.25,
+                    "tech__return_21d": 0.20,
+                    "tech__price_to_ma200": 0.15,
+                    "tech__price_to_ma50": 0.10,
+                    "tech__volatility_21d": -0.10,
+                },
+            ),
+        ),
+        BaselineSpec(
+            name="technical_reversal",
+            factory=lambda _input_size: WeightedTechnicalRegressor(
+                name="technical_reversal",
+                feature_weights={
+                    "tech__bollinger_zscore": -0.45,
+                    "tech__return_5d": -0.30,
+                    "tech__return_1d": -0.15,
+                    "tech__volatility_21d": -0.10,
+                },
+            ),
+        ),
+        BaselineSpec(
+            name="technical_blend",
+            factory=lambda _input_size: WeightedTechnicalRegressor(
+                name="technical_blend",
+                feature_weights={
+                    "tech__momentum_12_1": 0.25,
+                    "tech__return_63d": 0.15,
+                    "tech__return_21d": 0.10,
+                    "tech__bollinger_zscore": -0.25,
+                    "tech__return_5d": -0.15,
+                    "tech__volatility_21d": -0.10,
+                },
+            ),
+        ),
     ]
 
     if include_tree_models:
@@ -227,3 +302,34 @@ def _resolve_dataset_tensors(dataset: Dataset) -> tuple:
         return dataset.features, dataset.targets
 
     raise TypeError("Unsupported dataset type for sklearn baseline training.")
+
+
+def _resolve_feature_names(dataset: Dataset) -> list[str]:
+    if isinstance(dataset, Subset):
+        return _resolve_feature_names(dataset.dataset)
+    return list(getattr(dataset, "feature_names", []))
+
+
+def _resolve_sample_dates(dataset: Dataset) -> list:
+    if isinstance(dataset, Subset):
+        sample_dates = _resolve_sample_dates(dataset.dataset)
+        return [sample_dates[idx] for idx in dataset.indices]
+    return list(getattr(dataset, "sample_dates", []))
+
+
+def _normalize_by_date(scores: np.ndarray, sample_dates: list) -> np.ndarray:
+    if len(scores) == 0 or len(sample_dates) != len(scores):
+        return scores
+
+    normalized = scores.astype(np.float32, copy=True)
+    for date in set(sample_dates):
+        indices = [idx for idx, sample_date in enumerate(sample_dates) if sample_date == date]
+        if len(indices) < 2:
+            continue
+        date_scores = normalized[indices]
+        std = float(date_scores.std())
+        if std == 0.0:
+            normalized[indices] = 0.0
+        else:
+            normalized[indices] = (date_scores - float(date_scores.mean())) / std
+    return normalized
