@@ -48,8 +48,7 @@ class WalkForwardValidator:
         device: str = "cpu",
     ) -> pd.DataFrame:
         regime_series = regime_labels["regime"] if isinstance(regime_labels, pd.DataFrame) else regime_labels
-        factor_index = factors.index if factors is not None else returns.index
-        usable_dates = features.index.intersection(returns.index).intersection(regime_series.index).intersection(factor_index)
+        usable_dates = features.index.intersection(returns.index).intersection(regime_series.index)
         splits = self.generate_splits(usable_dates)
 
         rows: list[dict[str, float | int]] = []
