@@ -40,3 +40,4 @@ def test_load_config_parses_data_paths(tmp_path: Path):
     assert config.alpha.selection_path == Path("data/processed/alpha_signal_selection.parquet")
     assert config.risk.output_dir == Path("data/results")
     assert config.risk.transaction_cost_bps == 10.0
+    assert config.risk.rebalance_interval_days == 1
