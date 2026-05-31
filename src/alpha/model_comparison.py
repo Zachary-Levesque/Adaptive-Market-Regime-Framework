@@ -41,10 +41,20 @@ class AlphaModelComparator:
         alpha_config: AlphaConfig,
         regime_config: RegimeConfig,
         baseline_specs: list[BaselineSpec] | None = None,
+        transaction_cost_bps: float = 10.0,
+        max_gross_exposure: float = 1.0,
+        long_fraction: float = 0.2,
+        short_fraction: float = 0.2,
+        rebalance_interval_days: int = 1,
     ) -> None:
         self.alpha_config = alpha_config
         self.regime_config = regime_config
         self.baseline_specs = baseline_specs or build_default_baseline_specs()
+        self.transaction_cost_bps = transaction_cost_bps
+        self.max_gross_exposure = max_gross_exposure
+        self.long_fraction = long_fraction
+        self.short_fraction = short_fraction
+        self.rebalance_interval_days = max(1, int(rebalance_interval_days))
 
     def build(
         self,
@@ -90,6 +100,7 @@ class AlphaModelComparator:
             model_name: pd.DataFrame(np.nan, index=returns.index, columns=returns.columns, dtype=float)
             for model_name, _ in model_specs
         }
+        signal_frames["cash"] = pd.DataFrame(np.nan, index=returns.index, columns=returns.columns, dtype=float)
 
         for model_name, factory in model_specs:
             for regime in unique_regimes:
@@ -111,7 +122,9 @@ class AlphaModelComparator:
 
         fold_metrics = pd.concat(fold_frames, ignore_index=True) if fold_frames else pd.DataFrame()
         leaderboard = self._summarize(fold_metrics)
+        leaderboard = self._with_cash_candidate(leaderboard)
         leaderboard = self._attach_signal_stats(leaderboard, signal_frames)
+        leaderboard = self._attach_projected_backtest_stats(leaderboard, signal_frames, returns)
         signal_paths = self.save(signal_frames, fold_metrics, leaderboard)
         best_model = str(leaderboard.index[0]) if not leaderboard.empty else ""
         best_signal_path = signal_paths.get(best_model)
@@ -228,6 +241,12 @@ class AlphaModelComparator:
             model.fit(train_subset, val_subset, epochs=epochs, device=self.alpha_config.device)
             predictions = model.predict_dataset(test_dataset, device=self.alpha_config.device)
             actuals = test_dataset.targets.detach().cpu().numpy()
+            trading_stats = self._compute_trading_stats(
+                predictions=predictions,
+                actuals=actuals,
+                dates=test_dataset.sample_dates,
+                tickers=test_dataset.sample_tickers,
+            )
 
             fold_rows.append(
                 {
@@ -236,7 +255,10 @@ class AlphaModelComparator:
                     "fold": fold,
                     "n_train": len(train_dataset),
                     "n_test": len(test_dataset),
-                    "sharpe": validator._compute_daily_sharpe(predictions, actuals, test_dataset.sample_dates),
+                    "sharpe": trading_stats["gross_sharpe"],
+                    "net_sharpe": trading_stats["net_sharpe"],
+                    "mean_turnover": trading_stats["mean_turnover"],
+                    "mean_transaction_cost": trading_stats["mean_transaction_cost"],
                     "ic": validator._safe_corr(predictions, actuals, method="pearson"),
                     "rank_ic": validator._safe_corr(predictions, actuals, method="spearman"),
                     "hit_rate": float(np.mean(np.sign(predictions) == np.sign(actuals))),
@@ -258,9 +280,12 @@ class AlphaModelComparator:
                     "n_regimes",
                     "mean_sharpe",
                     "median_sharpe",
+                    "mean_net_sharpe",
                     "mean_ic",
                     "mean_rank_ic",
                     "mean_hit_rate",
+                    "mean_turnover",
+                    "mean_transaction_cost",
                     "mean_train_size",
                     "mean_test_size",
                 ]
@@ -278,17 +303,238 @@ class AlphaModelComparator:
                     "n_regimes": int(group["regime"].nunique()) if "regime" in group.columns else 0,
                     "mean_sharpe": float(group["sharpe"].mean()) if "sharpe" in group.columns else 0.0,
                     "median_sharpe": float(group["sharpe"].median()) if "sharpe" in group.columns else 0.0,
+                    "mean_net_sharpe": float(group["net_sharpe"].mean()) if "net_sharpe" in group.columns else 0.0,
                     "mean_ic": float(group["ic"].mean()) if "ic" in group.columns else 0.0,
                     "mean_rank_ic": float(group["rank_ic"].mean()) if "rank_ic" in group.columns else 0.0,
                     "mean_hit_rate": float(group["hit_rate"].mean()) if "hit_rate" in group.columns else 0.0,
+                    "mean_turnover": float(group["mean_turnover"].mean()) if "mean_turnover" in group.columns else 0.0,
+                    "mean_transaction_cost": float(group["mean_transaction_cost"].mean())
+                    if "mean_transaction_cost" in group.columns
+                    else 0.0,
                     "mean_train_size": float(group["n_train"].mean()) if "n_train" in group.columns else 0.0,
                     "mean_test_size": float(group["n_test"].mean()) if "n_test" in group.columns else 0.0,
                 }
             )
 
         leaderboard = pd.DataFrame(rows).set_index("model")
-        leaderboard = leaderboard.sort_values(["mean_sharpe", "mean_ic", "mean_hit_rate"], ascending=False)
+        leaderboard = leaderboard.sort_values(["mean_net_sharpe", "mean_sharpe", "mean_ic"], ascending=False)
         return leaderboard
+
+    @staticmethod
+    def _with_cash_candidate(leaderboard: pd.DataFrame) -> pd.DataFrame:
+        cash_row = pd.DataFrame(
+            [
+                {
+                    "n_rows": 0,
+                    "n_folds": 0,
+                    "n_regimes": 0,
+                    "mean_sharpe": 0.0,
+                    "median_sharpe": 0.0,
+                    "mean_net_sharpe": 0.0,
+                    "mean_ic": 0.0,
+                    "mean_rank_ic": 0.0,
+                    "mean_hit_rate": 0.0,
+                    "mean_turnover": 0.0,
+                    "mean_transaction_cost": 0.0,
+                    "mean_train_size": 0.0,
+                    "mean_test_size": 0.0,
+                }
+            ],
+            index=pd.Index(["cash"], name="model"),
+        )
+        combined = cash_row if leaderboard.empty else pd.concat([leaderboard, cash_row])
+        return combined.sort_values(["mean_net_sharpe", "mean_sharpe", "mean_ic"], ascending=False)
+
+    def _compute_trading_stats(
+        self,
+        predictions: np.ndarray,
+        actuals: np.ndarray,
+        dates: pd.DatetimeIndex,
+        tickers: list[str],
+    ) -> dict[str, float]:
+        frame = pd.DataFrame(
+            {
+                "date": pd.DatetimeIndex(dates),
+                "ticker": tickers,
+                "prediction": predictions,
+                "actual": actuals,
+            }
+        ).dropna()
+        if frame.empty:
+            return {
+                "gross_sharpe": 0.0,
+                "net_sharpe": 0.0,
+                "mean_turnover": 0.0,
+                "mean_transaction_cost": 0.0,
+            }
+
+        daily_returns: list[float] = []
+        daily_net_returns: list[float] = []
+        daily_turnover: list[float] = []
+        previous_weights: pd.Series | None = None
+        current_weights: pd.Series | None = None
+        last_rebalance_pos: int | None = None
+
+        for pos, (_, group) in enumerate(frame.sort_values("date").groupby("date", sort=True)):
+            candidate_weights = self._construct_fold_weights(group)
+            if candidate_weights.empty and current_weights is None:
+                continue
+            should_rebalance = (
+                not candidate_weights.empty
+                and (last_rebalance_pos is None or pos - last_rebalance_pos >= self.rebalance_interval_days)
+            )
+            if should_rebalance:
+                current_weights = candidate_weights
+                last_rebalance_pos = pos
+
+            if current_weights is None:
+                continue
+
+            weights = current_weights.copy()
+            actual_returns = group.set_index("ticker")["actual"].reindex(weights.index).fillna(0.0)
+            gross_return = float((weights * actual_returns).sum())
+            if previous_weights is None:
+                aligned_previous = pd.Series(0.0, index=weights.index)
+            else:
+                aligned_index = weights.index.union(previous_weights.index)
+                weights = weights.reindex(aligned_index).fillna(0.0)
+                actual_returns = actual_returns.reindex(aligned_index).fillna(0.0)
+                aligned_previous = previous_weights.reindex(aligned_index).fillna(0.0)
+                gross_return = float((weights * actual_returns).sum())
+
+            turnover = float((weights - aligned_previous).abs().sum())
+            transaction_cost = turnover * (self.transaction_cost_bps / 10_000.0)
+            daily_returns.append(gross_return)
+            daily_net_returns.append(gross_return - transaction_cost)
+            daily_turnover.append(turnover)
+            previous_weights = weights
+
+        return {
+            "gross_sharpe": self._annualized_sharpe(daily_returns),
+            "net_sharpe": self._annualized_sharpe(daily_net_returns),
+            "mean_turnover": float(np.mean(daily_turnover)) if daily_turnover else 0.0,
+            "mean_transaction_cost": float(np.mean(daily_turnover) * (self.transaction_cost_bps / 10_000.0))
+            if daily_turnover
+            else 0.0,
+        }
+
+    def _construct_fold_weights(self, group: pd.DataFrame) -> pd.Series:
+        clean = group.set_index("ticker")["prediction"].dropna().sort_values()
+        if clean.empty:
+            return pd.Series(dtype=float)
+
+        n_assets = len(clean)
+        n_long = max(1, int(np.ceil(n_assets * self.long_fraction)))
+        n_short = max(1, int(np.ceil(n_assets * self.short_fraction)))
+        long_names = clean.tail(n_long).index
+        short_names = clean.head(n_short).index
+        if set(long_names) & set(short_names):
+            return pd.Series(dtype=float)
+
+        weights = pd.Series(0.0, index=clean.index, dtype=float)
+        gross_side = self.max_gross_exposure / 2.0
+        weights.loc[long_names] = gross_side / len(long_names)
+        weights.loc[short_names] = -gross_side / len(short_names)
+        return weights
+
+    @staticmethod
+    def _annualized_sharpe(returns: list[float]) -> float:
+        if not returns:
+            return 0.0
+        series = pd.Series(returns)
+        std = float(series.std(ddof=0))
+        if std == 0.0:
+            return 0.0
+        return float(np.sqrt(252.0) * series.mean() / std)
+
+    def _attach_projected_backtest_stats(
+        self,
+        leaderboard: pd.DataFrame,
+        signal_frames: dict[str, pd.DataFrame],
+        returns: pd.DataFrame,
+    ) -> pd.DataFrame:
+        if leaderboard.empty:
+            return leaderboard
+
+        enriched = leaderboard.copy()
+        for model_name, signals in signal_frames.items():
+            if model_name not in enriched.index:
+                continue
+
+            stats = self._project_signal_backtest(signals, returns)
+            for key, value in stats.items():
+                enriched.loc[model_name, key] = value
+
+        return enriched.sort_values(
+            ["projected_backtest_sharpe", "projected_total_return", "mean_net_sharpe"],
+            ascending=False,
+        )
+
+    def _project_signal_backtest(self, signals: pd.DataFrame, returns: pd.DataFrame) -> dict[str, float]:
+        normalized_signals = self._normalize_frame(signals)
+        normalized_returns = self._normalize_frame(returns)
+        common_index = normalized_returns.index.intersection(normalized_signals.index).sort_values()
+        common_columns = normalized_returns.columns.intersection(normalized_signals.columns).sort_values()
+        if common_index.empty or common_columns.empty:
+            return {
+                "projected_backtest_sharpe": 0.0,
+                "projected_total_return": 0.0,
+                "projected_mean_turnover": 0.0,
+            }
+
+        signals = normalized_signals.loc[common_index, common_columns]
+        returns = normalized_returns.loc[common_index, common_columns].fillna(0.0)
+        active_rows = signals.notna().any(axis=1)
+        if not active_rows.any():
+            return {
+                "projected_backtest_sharpe": 0.0,
+                "projected_total_return": 0.0,
+                "projected_mean_turnover": 0.0,
+            }
+
+        first_active = active_rows[active_rows].index[0]
+        signals = signals.loc[signals.index >= first_active]
+        returns = returns.loc[returns.index >= first_active]
+
+        raw_weights = pd.DataFrame(0.0, index=signals.index, columns=signals.columns)
+        for date, row in signals.iterrows():
+            weights = self._construct_fold_weights(
+                pd.DataFrame({"ticker": row.index, "prediction": pd.to_numeric(row, errors="coerce").to_numpy()})
+            )
+            if not weights.empty:
+                raw_weights.loc[date, weights.index] = weights
+
+        target_weights = self._apply_rebalance_schedule(raw_weights)
+        applied_weights = target_weights.shift(1).reindex(returns.index).fillna(0.0)
+        gross_returns = (applied_weights * returns).sum(axis=1)
+        turnover = applied_weights.diff().abs().sum(axis=1).fillna(applied_weights.abs().sum(axis=1))
+        transaction_cost = turnover * (self.transaction_cost_bps / 10_000.0)
+        strategy_returns = gross_returns - transaction_cost
+
+        return {
+            "projected_backtest_sharpe": self._annualized_sharpe(strategy_returns.tolist()),
+            "projected_total_return": float((1.0 + strategy_returns).prod() - 1.0),
+            "projected_mean_turnover": float(turnover.mean()) if len(turnover) else 0.0,
+        }
+
+    def _apply_rebalance_schedule(self, weights: pd.DataFrame) -> pd.DataFrame:
+        interval = max(1, int(self.rebalance_interval_days))
+        if interval <= 1 or weights.empty:
+            return weights
+
+        scheduled = pd.DataFrame(0.0, index=weights.index, columns=weights.columns)
+        current = pd.Series(0.0, index=weights.columns, dtype=float)
+        last_rebalance_pos: int | None = None
+        for pos, (date, row) in enumerate(weights.iterrows()):
+            has_signal = bool(row.abs().sum() > 0.0)
+            should_rebalance = has_signal and (
+                last_rebalance_pos is None or pos - last_rebalance_pos >= interval
+            )
+            if should_rebalance:
+                current = row.copy()
+                last_rebalance_pos = pos
+            scheduled.loc[date] = current
+        return scheduled
 
     @staticmethod
     def _attach_signal_stats(leaderboard: pd.DataFrame, signal_frames: dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -312,3 +558,10 @@ class AlphaModelComparator:
             )
 
         return enriched
+
+    @staticmethod
+    def _normalize_frame(frame: pd.DataFrame) -> pd.DataFrame:
+        normalized = frame.copy()
+        normalized.index = pd.to_datetime(normalized.index).tz_localize(None)
+        normalized = normalized.apply(pd.to_numeric, errors="coerce")
+        return normalized.replace([np.inf, -np.inf], np.nan).sort_index()
