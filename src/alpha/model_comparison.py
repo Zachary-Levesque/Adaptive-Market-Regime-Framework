@@ -566,12 +566,18 @@ class AlphaModelComparator:
             stats = self._project_signal_backtest(signals, returns)
             for key, value in stats.items():
                 enriched.loc[model_name, key] = value
-            enriched.loc[model_name, "projected_is_tradable"] = float(
-                stats["projected_backtest_sharpe"] > 0.0 and stats["projected_total_return"] > 0.0
-            )
+            is_tradable = stats["projected_backtest_sharpe"] > 0.0 and stats["projected_total_return"] > 0.0
+            enriched.loc[model_name, "projected_is_tradable"] = float(is_tradable)
+            enriched.loc[model_name, "projected_selection_eligible"] = float(is_tradable or model_name == "cash")
 
         return enriched.sort_values(
-            ["projected_is_tradable", "projected_backtest_sharpe", "projected_total_return", "mean_net_sharpe"],
+            [
+                "projected_selection_eligible",
+                "projected_is_tradable",
+                "projected_backtest_sharpe",
+                "projected_total_return",
+                "mean_net_sharpe",
+            ],
             ascending=False,
         )
 
