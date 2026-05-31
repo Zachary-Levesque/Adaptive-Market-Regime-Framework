@@ -76,6 +76,38 @@ class SklearnSequenceRegressor(SequenceRegressor):
         return flattened, targets.astype(np.float32, copy=False)
 
 
+class SklearnLastStepRegressor(SklearnSequenceRegressor):
+    """Fit a sklearn regressor using only the most recent feature vector."""
+
+    @staticmethod
+    def _dataset_to_arrays(dataset: Dataset) -> tuple[np.ndarray, np.ndarray]:
+        features_tensor, targets_tensor = _resolve_dataset_tensors(dataset)
+        features = features_tensor.detach().cpu().numpy()
+        targets = targets_tensor.detach().cpu().numpy().reshape(-1)
+        if len(features) == 0:
+            return np.empty((0, 0), dtype=np.float32), np.array([], dtype=np.float32)
+        latest = features[:, -1, :].astype(np.float32, copy=False)
+        return latest, targets.astype(np.float32, copy=False)
+
+
+class SklearnSequenceSummaryRegressor(SklearnSequenceRegressor):
+    """Fit a sklearn regressor on compact sequence summary statistics."""
+
+    @staticmethod
+    def _dataset_to_arrays(dataset: Dataset) -> tuple[np.ndarray, np.ndarray]:
+        features_tensor, targets_tensor = _resolve_dataset_tensors(dataset)
+        features = features_tensor.detach().cpu().numpy()
+        targets = targets_tensor.detach().cpu().numpy().reshape(-1)
+        if len(features) == 0:
+            return np.empty((0, 0), dtype=np.float32), np.array([], dtype=np.float32)
+
+        latest = features[:, -1, :]
+        sequence_mean = features.mean(axis=1)
+        sequence_std = features.std(axis=1)
+        summary = np.concatenate([latest, sequence_mean, sequence_std], axis=1)
+        return summary.astype(np.float32, copy=False), targets.astype(np.float32, copy=False)
+
+
 class DummyMeanRegressor:
     """Fallback regressor used when a baseline cannot be fit robustly."""
 
@@ -119,6 +151,42 @@ def build_default_baseline_specs(random_state: int = 42, include_tree_models: bo
                 name="elastic_net",
             ),
         ),
+        BaselineSpec(
+            name="ridge_last_step",
+            factory=lambda _input_size: SklearnLastStepRegressor(
+                Pipeline(
+                    [
+                        ("scaler", StandardScaler()),
+                        ("model", Ridge(alpha=1.0)),
+                    ]
+                ),
+                name="ridge_last_step",
+            ),
+        ),
+        BaselineSpec(
+            name="elastic_net_last_step",
+            factory=lambda _input_size: SklearnLastStepRegressor(
+                Pipeline(
+                    [
+                        ("scaler", StandardScaler()),
+                        ("model", ElasticNet(alpha=0.001, l1_ratio=0.5, max_iter=5000, random_state=random_state)),
+                    ]
+                ),
+                name="elastic_net_last_step",
+            ),
+        ),
+        BaselineSpec(
+            name="ridge_summary",
+            factory=lambda _input_size: SklearnSequenceSummaryRegressor(
+                Pipeline(
+                    [
+                        ("scaler", StandardScaler()),
+                        ("model", Ridge(alpha=1.0)),
+                    ]
+                ),
+                name="ridge_summary",
+            ),
+        ),
     ]
 
     if include_tree_models:
@@ -126,7 +194,7 @@ def build_default_baseline_specs(random_state: int = 42, include_tree_models: bo
             [
                 BaselineSpec(
                     name="random_forest",
-                    factory=lambda: SklearnSequenceRegressor(
+                    factory=lambda _input_size: SklearnLastStepRegressor(
                         RandomForestRegressor(
                             n_estimators=200,
                             min_samples_leaf=5,
@@ -138,7 +206,7 @@ def build_default_baseline_specs(random_state: int = 42, include_tree_models: bo
                 ),
                 BaselineSpec(
                     name="gradient_boosting",
-                    factory=lambda: SklearnSequenceRegressor(
+                    factory=lambda _input_size: SklearnLastStepRegressor(
                         GradientBoostingRegressor(random_state=random_state),
                         name="gradient_boosting",
                     ),
