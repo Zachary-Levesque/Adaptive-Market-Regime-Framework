@@ -70,6 +70,7 @@ class RiskConfig:
     max_gross_exposure: float
     long_fraction: float
     short_fraction: float
+    rebalance_interval_days: int
 
 
 @dataclass(frozen=True)
@@ -178,6 +179,7 @@ def load_config(path: str | Path) -> AppConfig:
             max_gross_exposure=float(risk_section.get("max_gross_exposure", 1.0)),
             long_fraction=float(risk_section.get("long_fraction", 0.2)),
             short_fraction=float(risk_section.get("short_fraction", 0.2)),
+            rebalance_interval_days=max(1, int(risk_section.get("rebalance_interval_days", 1))),
         ),
     )
 
