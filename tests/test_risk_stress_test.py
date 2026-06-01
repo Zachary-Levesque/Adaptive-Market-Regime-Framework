@@ -17,8 +17,10 @@ def test_stress_tester_reports_named_windows_and_missing_periods():
     )
 
     assert report.loc["observed", "n_days"] > 0
+    assert report.loc["observed", "status"] == "ok"
     assert report.loc["observed", "max_drawdown"] <= 0
     assert report.loc["missing", "n_days"] == 0
+    assert report.loc["missing", "status"] == "no_overlap"
     assert np.isnan(report.loc["missing", "period_return"])
 
 
@@ -29,4 +31,3 @@ def test_scenario_analysis_handles_direct_asset_shocks():
     )
 
     assert np.isclose(loss, -0.07)
-
