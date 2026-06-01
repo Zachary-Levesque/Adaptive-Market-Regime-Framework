@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
 
 from src.config import load_config
 from src.risk.backtester import AMRFBacktester, BacktestConfig
+
+
+@dataclass(frozen=True)
+class SignalSelection:
+    signal_path: Path
+    transaction_cost_bps: float | None = None
+    rebalance_interval_days: int | None = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -33,6 +41,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Total absolute long plus short exposure.",
     )
+    parser.add_argument(
+        "--rebalance-interval-days",
+        type=int,
+        default=None,
+        help="Number of trading days between scheduled rebalances.",
+    )
     return parser.parse_args()
 
 
@@ -41,9 +55,23 @@ def main() -> None:
     config = load_config(args.config)
 
     returns = pd.read_parquet(config.data.processed_dir / "returns.parquet")
-    signal_path = resolve_signal_path(config, override=args.signal_source)
-    alpha_signals = pd.read_parquet(signal_path)
+    selection = resolve_signal_selection(config, override=args.signal_source)
+    alpha_signals = pd.read_parquet(selection.signal_path)
     regime_labels = pd.read_parquet(config.regime.output_dir / "regime_labels.parquet")
+    transaction_cost_bps = (
+        args.transaction_cost_bps
+        if args.transaction_cost_bps is not None
+        else selection.transaction_cost_bps
+        if selection.transaction_cost_bps is not None
+        else config.risk.transaction_cost_bps
+    )
+    rebalance_interval_days = (
+        args.rebalance_interval_days
+        if args.rebalance_interval_days is not None
+        else selection.rebalance_interval_days
+        if selection.rebalance_interval_days is not None
+        else config.risk.rebalance_interval_days
+    )
 
     backtester = AMRFBacktester(
         returns=returns,
@@ -53,23 +81,27 @@ def main() -> None:
             max_gross_exposure=args.max_gross_exposure or config.risk.max_gross_exposure,
             long_fraction=config.risk.long_fraction,
             short_fraction=config.risk.short_fraction,
-            transaction_cost_bps=args.transaction_cost_bps
-            if args.transaction_cost_bps is not None
-            else config.risk.transaction_cost_bps,
+            transaction_cost_bps=transaction_cost_bps,
             benchmark=config.data.benchmark,
-            rebalance_interval_days=config.risk.rebalance_interval_days,
+            rebalance_interval_days=rebalance_interval_days,
         ),
     )
     artifacts = backtester.run(start=args.start, end=args.end, stress_periods=config.risk.stress_periods)
     backtester.save(artifacts, output_dir=config.risk.output_dir)
 
     print(artifacts.performance_report.round(4).to_string())
-    print(f"\nSignals used: {signal_path}")
+    print(f"\nSignals used: {selection.signal_path}")
+    print(f"Transaction cost bps: {transaction_cost_bps}")
+    print(f"Rebalance interval days: {rebalance_interval_days}")
 
 
 def resolve_signal_path(config, override: str | None = None):
+    return resolve_signal_selection(config, override=override).signal_path
+
+
+def resolve_signal_selection(config, override: str | None = None) -> SignalSelection:
     if override is not None:
-        return Path(override)
+        return SignalSelection(signal_path=Path(override))
 
     selection_path = config.alpha.selection_path
     if selection_path.exists():
@@ -77,9 +109,25 @@ def resolve_signal_path(config, override: str | None = None):
         if not selection.empty and "signal_path" in selection.columns:
             selected_path = Path(str(selection.iloc[0]["signal_path"]))
             if selected_path.exists():
-                return selected_path
+                return SignalSelection(
+                    signal_path=selected_path,
+                    transaction_cost_bps=_optional_float(selection.iloc[0].get("transaction_cost_bps")),
+                    rebalance_interval_days=_optional_int(selection.iloc[0].get("rebalance_interval_days")),
+                )
 
-    return config.alpha.signals_path
+    return SignalSelection(signal_path=config.alpha.signals_path)
+
+
+def _optional_float(value) -> float | None:
+    if pd.isna(value):
+        return None
+    return float(value)
+
+
+def _optional_int(value) -> int | None:
+    if pd.isna(value):
+        return None
+    return int(value)
 
 
 if __name__ == "__main__":
