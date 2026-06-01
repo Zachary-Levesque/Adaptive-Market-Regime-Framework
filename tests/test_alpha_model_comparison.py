@@ -500,6 +500,79 @@ def test_regime_selector_requires_enough_positive_folds(tmp_path: Path):
     assert comparator._select_models_by_regime(fold_metrics) == {}
 
 
+def test_selection_manifest_prefers_realistic_positive_sensitivity_row(tmp_path: Path):
+    comparator = AlphaModelComparator(
+        alpha_config=_minimal_alpha_config(tmp_path),
+        regime_config=_minimal_regime_config(tmp_path),
+        baseline_specs=[],
+        transaction_cost_bps=10.0,
+    )
+    leaderboard = pd.DataFrame(
+        [
+            {"model": "cash", "projected_backtest_sharpe": 0.0, "projected_total_return": 0.0},
+            {"model": "ensemble", "projected_backtest_sharpe": 0.2, "projected_total_return": 0.01},
+        ]
+    ).set_index("model")
+    signal_paths = {
+        "cash": tmp_path / "cash.parquet",
+        "ensemble": tmp_path / "ensemble.parquet",
+    }
+    sensitivity = pd.DataFrame(
+        [
+            {
+                "model": "ensemble",
+                "transaction_cost_bps": 0.0,
+                "rebalance_interval_days": 1,
+                "projected_backtest_sharpe": 2.0,
+                "projected_total_return": 0.5,
+                "projected_mean_turnover": 0.4,
+            },
+            {
+                "model": "ensemble",
+                "transaction_cost_bps": 10.0,
+                "rebalance_interval_days": 5,
+                "projected_backtest_sharpe": 0.9,
+                "projected_total_return": 0.06,
+                "projected_mean_turnover": 0.1,
+            },
+        ]
+    )
+
+    selection = comparator._build_selection_manifest(leaderboard, signal_paths, sensitivity)
+
+    assert selection.loc[0, "model"] == "ensemble"
+    assert selection.loc[0, "selection_method"] == "sensitivity"
+    assert selection.loc[0, "transaction_cost_bps"] == 10.0
+    assert selection.loc[0, "rebalance_interval_days"] == 5
+
+
+def test_selection_manifest_falls_back_to_leaderboard_when_no_tradable_sensitivity(tmp_path: Path):
+    comparator = AlphaModelComparator(
+        alpha_config=_minimal_alpha_config(tmp_path),
+        regime_config=_minimal_regime_config(tmp_path),
+        baseline_specs=[],
+    )
+    leaderboard = pd.DataFrame([{"model": "cash", "projected_backtest_sharpe": 0.0}]).set_index("model")
+    signal_paths = {"cash": tmp_path / "cash.parquet"}
+    sensitivity = pd.DataFrame(
+        [
+            {
+                "model": "weak",
+                "transaction_cost_bps": 10.0,
+                "rebalance_interval_days": 5,
+                "projected_backtest_sharpe": -0.1,
+                "projected_total_return": -0.01,
+                "projected_mean_turnover": 0.1,
+            }
+        ]
+    )
+
+    selection = comparator._build_selection_manifest(leaderboard, signal_paths, sensitivity)
+
+    assert selection.loc[0, "model"] == "cash"
+    assert selection.loc[0, "selection_method"] == "leaderboard"
+
+
 def _minimal_alpha_config(tmp_path: Path) -> AlphaConfig:
     return AlphaConfig(
         hidden_size=8,
