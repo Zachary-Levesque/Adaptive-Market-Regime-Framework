@@ -28,8 +28,10 @@ class StubFactorLoader:
     def __init__(self, ff5: pd.DataFrame, macro: pd.DataFrame):
         self._ff5 = ff5
         self._macro = macro
+        self.ff5_calls: list[tuple[str, str]] = []
 
-    def download_ff5(self):
+    def download_ff5(self, start=None, end=None):
+        self.ff5_calls.append((start, end))
         return self._ff5
 
     def align_with_returns(self, factors, returns):
@@ -96,6 +98,7 @@ def test_pipeline_build_persists_all_expected_outputs(tmp_path: Path):
     assert artifacts.returns.equals(returns)
     assert artifacts.technical_features.iloc[0, 0] == 10.0
     assert ingester.download_calls == [["SPY"]]
+    assert factor_loader.ff5_calls == [("2024-01-01", "2024-01-31")]
     assert len(ingester.saved_paths) == 6
     assert (tmp_path / "processed" / "prices.parquet") in ingester.saved_paths
     assert (tmp_path / "processed" / "regime_features.parquet") in ingester.saved_paths
