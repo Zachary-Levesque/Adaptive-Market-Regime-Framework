@@ -132,7 +132,7 @@ class AlphaModelComparator:
         leaderboard = self._attach_projected_backtest_stats(leaderboard, signal_frames, returns)
         sensitivity_report = self._build_cost_rebalance_sensitivity(signal_frames, returns)
         signal_paths = self.save(signal_frames, fold_metrics, leaderboard, sensitivity_report)
-        best_model = str(leaderboard.index[0]) if not leaderboard.empty else ""
+        best_model = self._resolve_selected_model(default=str(leaderboard.index[0]) if not leaderboard.empty else "")
         best_signal_path = signal_paths.get(best_model)
         return AlphaComparisonArtifacts(
             fold_metrics=fold_metrics,
@@ -178,6 +178,18 @@ class AlphaModelComparator:
             sensitivity_report.to_parquet(output_path.with_name("alpha_cost_rebalance_sensitivity.parquet"))
         logger.info("Saved alpha model comparison to {}", output_path)
         return signal_paths
+
+    def _resolve_selected_model(self, default: str = "") -> str:
+        selection_path = self.alpha_config.selection_path
+        if not selection_path.exists():
+            return default
+
+        selection = pd.read_parquet(selection_path)
+        if selection.empty or "model" not in selection.columns:
+            return default
+
+        model = selection.iloc[0]["model"]
+        return str(model) if pd.notna(model) else default
 
     def _build_selection_manifest(
         self,
