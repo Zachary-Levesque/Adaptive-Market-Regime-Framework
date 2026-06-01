@@ -48,6 +48,7 @@ class AlphaModelComparator:
         short_fraction: float = 0.2,
         rebalance_interval_days: int = 1,
         min_regime_selection_folds: int = 3,
+        min_selection_active_days: int = 504,
     ) -> None:
         self.alpha_config = alpha_config
         self.regime_config = regime_config
@@ -58,6 +59,7 @@ class AlphaModelComparator:
         self.short_fraction = short_fraction
         self.rebalance_interval_days = max(1, int(rebalance_interval_days))
         self.min_regime_selection_folds = max(1, int(min_regime_selection_folds))
+        self.min_selection_active_days = max(1, int(min_selection_active_days))
 
     def build(
         self,
@@ -199,6 +201,11 @@ class AlphaModelComparator:
     ) -> pd.DataFrame:
         """Choose the deployable alpha signal and execution settings."""
         if sensitivity_report is not None and not sensitivity_report.empty:
+            sensitivity_report = self._attach_selection_history(
+                sensitivity_report,
+                leaderboard=leaderboard,
+                signal_paths=signal_paths,
+            )
             selected = self._select_from_sensitivity(sensitivity_report)
             if selected is not None:
                 model_name = str(selected["model"])
@@ -262,6 +269,11 @@ class AlphaModelComparator:
 
         candidates = sensitivity_report.copy()
         candidates = candidates[candidates["model"].ne("cash")]
+        if "active_signal_days" in candidates.columns:
+            candidates = candidates[
+                pd.to_numeric(candidates["active_signal_days"], errors="coerce").fillna(0)
+                >= self.min_selection_active_days
+            ]
         candidates = candidates[
             candidates["projected_backtest_sharpe"].gt(0.0)
             & candidates["projected_total_return"].gt(0.0)
@@ -291,6 +303,36 @@ class AlphaModelComparator:
             ascending=[False, False, True],
         )
         return ranked.iloc[0]
+
+    def _attach_selection_history(
+        self,
+        sensitivity_report: pd.DataFrame,
+        leaderboard: pd.DataFrame,
+        signal_paths: dict[str, Path],
+    ) -> pd.DataFrame:
+        if "active_signal_days" in sensitivity_report.columns:
+            return sensitivity_report
+
+        active_days: dict[str, int] = {}
+        if "active_signal_days" in leaderboard.columns:
+            for model_name, value in leaderboard["active_signal_days"].items():
+                if pd.notna(value):
+                    active_days[str(model_name)] = int(value)
+
+        for model_name, path in signal_paths.items():
+            if model_name in active_days:
+                continue
+            if not path.exists():
+                continue
+            try:
+                frame = pd.read_parquet(path)
+            except Exception:
+                continue
+            active_days[model_name] = int(frame.notna().any(axis=1).sum())
+
+        enriched = sensitivity_report.copy()
+        enriched["active_signal_days"] = enriched["model"].map(active_days).fillna(0).astype(int)
+        return enriched
 
     def _project_regime_model(
         self,
@@ -827,6 +869,7 @@ class AlphaModelComparator:
     ) -> pd.DataFrame:
         rows: list[dict[str, float | int | str]] = []
         for model_name, signals in signal_frames.items():
+            active_signal_days = int(signals.notna().any(axis=1).sum())
             prepared = self._prepare_signal_projection(signals, returns)
             if prepared is None:
                 for cost_bps in transaction_cost_bps_values:
@@ -836,6 +879,7 @@ class AlphaModelComparator:
                                 "model": model_name,
                                 "transaction_cost_bps": float(cost_bps),
                                 "rebalance_interval_days": int(interval),
+                                "active_signal_days": active_signal_days,
                                 "projected_backtest_sharpe": 0.0,
                                 "projected_total_return": 0.0,
                                 "projected_mean_turnover": 0.0,
@@ -864,6 +908,7 @@ class AlphaModelComparator:
                             "model": model_name,
                             "transaction_cost_bps": float(cost_bps),
                             "rebalance_interval_days": int(interval),
+                            "active_signal_days": active_signal_days,
                             **stats,
                         }
                     )
@@ -874,6 +919,7 @@ class AlphaModelComparator:
                     "model",
                     "transaction_cost_bps",
                     "rebalance_interval_days",
+                    "active_signal_days",
                     "projected_backtest_sharpe",
                     "projected_total_return",
                     "projected_mean_turnover",
