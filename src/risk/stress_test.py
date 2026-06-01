@@ -47,6 +47,7 @@ class StressTester:
                         "max_drawdown": np.nan,
                         "volatility": np.nan,
                         "n_days": 0,
+                        "status": "no_overlap",
                     }
                 )
                 continue
@@ -58,6 +59,7 @@ class StressTester:
                     "max_drawdown": self.metrics.max_drawdown(window),
                     "volatility": self.metrics.annualized_volatility(window),
                     "n_days": int(len(window)),
+                    "status": "ok",
                 }
             )
 
@@ -91,4 +93,3 @@ class StressTester:
             raise ValueError("weights must match asset shock length.")
 
         return float(portfolio_weights @ shocks)
-
