@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
+from types import SimpleNamespace
 
+from src.alpha.build_diagnostics import resolve_signal_path
 from src.alpha.diagnostics import AlphaDiagnostics
 
 
@@ -48,3 +50,30 @@ def test_alpha_diagnostics_requires_overlap():
     else:
         raise AssertionError("Expected ValueError for missing ticker overlap")
 
+
+def test_diagnostics_resolve_signal_path_prefers_selection_manifest(tmp_path):
+    selected_path = tmp_path / "signals" / "ensemble.parquet"
+    selected_path.parent.mkdir(parents=True, exist_ok=True)
+    selected_path.write_bytes(b"")
+    selection_path = tmp_path / "alpha_signal_selection.parquet"
+    pd.DataFrame([{"signal_path": str(selected_path)}]).to_parquet(selection_path)
+    config = SimpleNamespace(
+        alpha=SimpleNamespace(
+            selection_path=selection_path,
+            signals_path=tmp_path / "fallback.parquet",
+        )
+    )
+
+    assert resolve_signal_path(config) == selected_path
+
+
+def test_diagnostics_resolve_signal_path_override_wins(tmp_path):
+    override_path = tmp_path / "override.parquet"
+    config = SimpleNamespace(
+        alpha=SimpleNamespace(
+            selection_path=tmp_path / "missing.parquet",
+            signals_path=tmp_path / "fallback.parquet",
+        )
+    )
+
+    assert resolve_signal_path(config, override=str(override_path)) == override_path
