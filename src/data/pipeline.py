@@ -68,7 +68,10 @@ class DataPipeline:
         )
         returns = self.ingester.compute_returns(prices)
 
-        ff_factors = self.factor_loader.download_ff5()
+        ff_factors = self.factor_loader.download_ff5(
+            start=self.config.start_date,
+            end=self.config.end_date,
+        )
         factors = self.factor_loader.align_with_returns(ff_factors, returns)
 
         macro = self.factor_loader.download_macro_series(
