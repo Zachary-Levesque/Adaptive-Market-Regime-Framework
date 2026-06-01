@@ -69,18 +69,18 @@ class FactorLoader:
         "F-F_Momentum_Factor",
     )
 
-    def download_ff5(self) -> pd.DataFrame:
+    def download_ff5(self, start: str | None = None, end: str | None = None) -> pd.DataFrame:
         """Download daily Fama-French 5 factors and momentum."""
         if web is None:
             raise ImportError("pandas-datareader is required for download_ff5(). Install dependencies first.")
 
-        ff5_raw = web.DataReader(self.FF5_DAILY_DATASET, "famafrench")[0]
+        ff5_raw = web.DataReader(self.FF5_DAILY_DATASET, "famafrench", start=start, end=end)[0]
         ff5 = self._clean_factor_frame(ff5_raw)
 
         momentum = None
         for dataset in self.MOMENTUM_DATASETS:
             try:
-                momentum_raw = web.DataReader(dataset, "famafrench")[0]
+                momentum_raw = web.DataReader(dataset, "famafrench", start=start, end=end)[0]
                 momentum = self._clean_factor_frame(momentum_raw)
                 break
             except Exception:  # pragma: no cover - depends on remote dataset availability
