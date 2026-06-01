@@ -3,7 +3,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.alpha.baselines import WeightedTechnicalRegressor, build_default_baseline_specs
+from src.alpha.baselines import (
+    VolatilityAdjustedTechnicalRegressor,
+    WeightedTechnicalRegressor,
+    build_default_baseline_specs,
+)
 from src.alpha.model_comparison import AlphaModelComparator
 from src.config import AlphaConfig, RegimeConfig
 
@@ -122,13 +126,16 @@ def test_alpha_model_comparison_builds_leaderboard_and_saves_artifacts(tmp_path:
     assert "projected_total_return" in artifacts.leaderboard.columns
     assert "projected_is_tradable" in artifacts.leaderboard.columns
     assert "projected_selection_eligible" in artifacts.leaderboard.columns
+    assert not artifacts.sensitivity_report.empty
+    assert {"transaction_cost_bps", "rebalance_interval_days"}.issubset(artifacts.sensitivity_report.columns)
     assert (tmp_path / "processed" / "alpha_model_comparison.parquet").exists()
     assert (tmp_path / "processed" / "alpha_model_comparison_summary.parquet").exists()
+    assert (tmp_path / "processed" / "alpha_cost_rebalance_sensitivity.parquet").exists()
     assert (tmp_path / "processed" / "alpha_signal_selection.parquet").exists()
     assert (tmp_path / "processed" / "alpha_signals" / "ridge.parquet").exists()
     assert (tmp_path / "processed" / "alpha_signals" / "ensemble.parquet").exists()
     assert artifacts.best_signal_path == tmp_path / "processed" / "alpha_signals" / f"{artifacts.best_model}.parquet"
-    assert artifacts.best_model in {"ridge", "ensemble", "cash", "regime_selector"}
+    assert artifacts.best_model in artifacts.signal_paths
 
 
 def test_optional_tree_baselines_accept_model_factory_input_size():
@@ -139,6 +146,14 @@ def test_optional_tree_baselines_accept_model_factory_input_size():
     for spec in tree_specs:
         model = spec.factory(3)
         assert model.name == spec.name
+
+
+def test_default_baselines_include_stronger_technical_variants():
+    names = {spec.name for spec in build_default_baseline_specs()}
+
+    assert "technical_multi_horizon" in names
+    assert "vol_adjusted_momentum" in names
+    assert "vol_adjusted_reversal" in names
 
 
 def test_weighted_technical_regressor_uses_named_features_and_date_normalization():
@@ -172,6 +187,39 @@ def test_weighted_technical_regressor_uses_named_features_and_date_normalization
 
     assert np.allclose(predictions[:2], [1.0, -1.0])
     assert predictions[2] == 3.0
+
+
+def test_volatility_adjusted_technical_regressor_scales_scores_by_latest_volatility():
+    class TinyDataset:
+        def __init__(self):
+            import torch
+
+            self.features = torch.tensor(
+                [
+                    [[0.0, 0.10], [1.0, 0.10]],
+                    [[0.0, 0.20], [1.0, 0.20]],
+                ],
+                dtype=torch.float32,
+            )
+            self.targets = torch.zeros(2, dtype=torch.float32)
+            self.feature_names = ["tech__return_63d", "tech__volatility_21d"]
+            self.sample_dates = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
+
+        def __len__(self):
+            return len(self.features)
+
+    dataset = TinyDataset()
+    model = VolatilityAdjustedTechnicalRegressor(
+        name="vol_adjusted_test",
+        feature_weights={"tech__return_63d": 1.0},
+        volatility_floor=0.01,
+        cross_sectional_normalize=False,
+    )
+    model.fit(dataset, dataset, epochs=0)
+
+    predictions = model.predict_dataset(dataset)
+
+    assert np.allclose(predictions, [10.0, 5.0])
 
 
 def test_cash_candidate_wins_when_all_models_have_negative_validation_sharpe(tmp_path: Path):
