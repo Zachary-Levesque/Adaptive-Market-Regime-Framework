@@ -28,6 +28,7 @@ except ImportError:  # pragma: no cover - dependency may not be installed in CI/
 class AlphaComparisonArtifacts:
     fold_metrics: pd.DataFrame
     leaderboard: pd.DataFrame
+    sensitivity_report: pd.DataFrame
     best_model: str
     best_signal_path: Path | None
     signal_paths: dict[str, Path]
@@ -129,12 +130,14 @@ class AlphaModelComparator:
         leaderboard = self._with_cash_candidate(leaderboard)
         leaderboard = self._attach_signal_stats(leaderboard, signal_frames)
         leaderboard = self._attach_projected_backtest_stats(leaderboard, signal_frames, returns)
-        signal_paths = self.save(signal_frames, fold_metrics, leaderboard)
+        sensitivity_report = self._build_cost_rebalance_sensitivity(signal_frames, returns)
+        signal_paths = self.save(signal_frames, fold_metrics, leaderboard, sensitivity_report)
         best_model = str(leaderboard.index[0]) if not leaderboard.empty else ""
         best_signal_path = signal_paths.get(best_model)
         return AlphaComparisonArtifacts(
             fold_metrics=fold_metrics,
             leaderboard=leaderboard,
+            sensitivity_report=sensitivity_report,
             best_model=best_model,
             best_signal_path=best_signal_path,
             signal_paths=signal_paths,
@@ -145,6 +148,7 @@ class AlphaModelComparator:
         signal_frames: dict[str, pd.DataFrame],
         fold_metrics: pd.DataFrame,
         leaderboard: pd.DataFrame,
+        sensitivity_report: pd.DataFrame | None = None,
     ) -> dict[str, Path]:
         output_path = self.alpha_config.comparison_path
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -179,6 +183,8 @@ class AlphaModelComparator:
             selection.loc[0, "model"] = top_model
             selection.loc[0, "signal_path"] = str(signal_paths[top_model])
         selection.to_parquet(self.alpha_config.selection_path)
+        if sensitivity_report is not None:
+            sensitivity_report.to_parquet(output_path.with_name("alpha_cost_rebalance_sensitivity.parquet"))
         logger.info("Saved alpha model comparison to {}", output_path)
         return signal_paths
 
@@ -581,7 +587,13 @@ class AlphaModelComparator:
             ascending=False,
         )
 
-    def _project_signal_backtest(self, signals: pd.DataFrame, returns: pd.DataFrame) -> dict[str, float]:
+    def _project_signal_backtest(
+        self,
+        signals: pd.DataFrame,
+        returns: pd.DataFrame,
+        transaction_cost_bps: float | None = None,
+        rebalance_interval_days: int | None = None,
+    ) -> dict[str, float]:
         normalized_signals = self._normalize_frame(signals)
         normalized_returns = self._normalize_frame(returns)
         common_index = normalized_returns.index.intersection(normalized_signals.index).sort_values()
@@ -615,11 +627,15 @@ class AlphaModelComparator:
             if not weights.empty:
                 raw_weights.loc[date, weights.index] = weights
 
-        target_weights = self._apply_rebalance_schedule(raw_weights)
+        target_weights = self._apply_rebalance_schedule(
+            raw_weights,
+            rebalance_interval_days=rebalance_interval_days,
+        )
         applied_weights = target_weights.shift(1).reindex(returns.index).fillna(0.0)
         gross_returns = (applied_weights * returns).sum(axis=1)
         turnover = applied_weights.diff().abs().sum(axis=1).fillna(applied_weights.abs().sum(axis=1))
-        transaction_cost = turnover * (self.transaction_cost_bps / 10_000.0)
+        cost_bps = self.transaction_cost_bps if transaction_cost_bps is None else float(transaction_cost_bps)
+        transaction_cost = turnover * (cost_bps / 10_000.0)
         strategy_returns = gross_returns - transaction_cost
 
         return {
@@ -628,8 +644,12 @@ class AlphaModelComparator:
             "projected_mean_turnover": float(turnover.mean()) if len(turnover) else 0.0,
         }
 
-    def _apply_rebalance_schedule(self, weights: pd.DataFrame) -> pd.DataFrame:
-        interval = max(1, int(self.rebalance_interval_days))
+    def _apply_rebalance_schedule(
+        self,
+        weights: pd.DataFrame,
+        rebalance_interval_days: int | None = None,
+    ) -> pd.DataFrame:
+        interval = max(1, int(self.rebalance_interval_days if rebalance_interval_days is None else rebalance_interval_days))
         if interval <= 1 or weights.empty:
             return weights
 
@@ -646,6 +666,50 @@ class AlphaModelComparator:
                 last_rebalance_pos = pos
             scheduled.loc[date] = current
         return scheduled
+
+    def _build_cost_rebalance_sensitivity(
+        self,
+        signal_frames: dict[str, pd.DataFrame],
+        returns: pd.DataFrame,
+        transaction_cost_bps_values: tuple[float, ...] = (0.0, 5.0, 10.0, 25.0),
+        rebalance_interval_values: tuple[int, ...] = (1, 5, 10, 21),
+    ) -> pd.DataFrame:
+        rows: list[dict[str, float | int | str]] = []
+        for model_name, signals in signal_frames.items():
+            for cost_bps in transaction_cost_bps_values:
+                for interval in rebalance_interval_values:
+                    stats = self._project_signal_backtest(
+                        signals=signals,
+                        returns=returns,
+                        transaction_cost_bps=cost_bps,
+                        rebalance_interval_days=interval,
+                    )
+                    rows.append(
+                        {
+                            "model": model_name,
+                            "transaction_cost_bps": float(cost_bps),
+                            "rebalance_interval_days": int(interval),
+                            **stats,
+                        }
+                    )
+
+        if not rows:
+            return pd.DataFrame(
+                columns=[
+                    "model",
+                    "transaction_cost_bps",
+                    "rebalance_interval_days",
+                    "projected_backtest_sharpe",
+                    "projected_total_return",
+                    "projected_mean_turnover",
+                ]
+            )
+
+        report = pd.DataFrame(rows)
+        return report.sort_values(
+            ["model", "transaction_cost_bps", "rebalance_interval_days"],
+            kind="stable",
+        ).reset_index(drop=True)
 
     @staticmethod
     def _attach_signal_stats(leaderboard: pd.DataFrame, signal_frames: dict[str, pd.DataFrame]) -> pd.DataFrame:
