@@ -168,25 +168,117 @@ class AlphaModelComparator:
         )
         leaderboard_to_save.to_parquet(output_path.with_name("alpha_model_comparison_summary.parquet"))
 
-        selection = pd.DataFrame(
-            [
-                {
-                    "model": leaderboard_to_save.index[0] if not leaderboard_to_save.empty else "",
-                    "signal_path": str(signal_paths.get(leaderboard_to_save.index[0], "")) if not leaderboard_to_save.empty else "",
-                }
-            ]
+        selection = self._build_selection_manifest(
+            leaderboard=leaderboard_to_save,
+            signal_paths=signal_paths,
+            sensitivity_report=sensitivity_report,
         )
-        if not leaderboard_to_save.empty:
-            top_model = leaderboard_to_save.index[0]
-            for column in leaderboard_to_save.columns:
-                selection.loc[0, column] = leaderboard_to_save.loc[top_model, column]
-            selection.loc[0, "model"] = top_model
-            selection.loc[0, "signal_path"] = str(signal_paths[top_model])
         selection.to_parquet(self.alpha_config.selection_path)
         if sensitivity_report is not None:
             sensitivity_report.to_parquet(output_path.with_name("alpha_cost_rebalance_sensitivity.parquet"))
         logger.info("Saved alpha model comparison to {}", output_path)
         return signal_paths
+
+    def _build_selection_manifest(
+        self,
+        leaderboard: pd.DataFrame,
+        signal_paths: dict[str, Path],
+        sensitivity_report: pd.DataFrame | None = None,
+    ) -> pd.DataFrame:
+        """Choose the deployable alpha signal and execution settings."""
+        if sensitivity_report is not None and not sensitivity_report.empty:
+            selected = self._select_from_sensitivity(sensitivity_report)
+            if selected is not None:
+                model_name = str(selected["model"])
+                row = {
+                    "model": model_name,
+                    "signal_path": str(signal_paths.get(model_name, "")),
+                    "selection_method": "sensitivity",
+                    "transaction_cost_bps": float(selected["transaction_cost_bps"]),
+                    "rebalance_interval_days": int(selected["rebalance_interval_days"]),
+                    "projected_backtest_sharpe": float(selected["projected_backtest_sharpe"]),
+                    "projected_total_return": float(selected["projected_total_return"]),
+                    "projected_mean_turnover": float(selected["projected_mean_turnover"]),
+                }
+                if model_name in leaderboard.index:
+                    for column in leaderboard.columns:
+                        row[column] = leaderboard.loc[model_name, column]
+                    row["model"] = model_name
+                    row["signal_path"] = str(signal_paths.get(model_name, row["signal_path"]))
+                    row["selection_method"] = "sensitivity"
+                    row["transaction_cost_bps"] = float(selected["transaction_cost_bps"])
+                    row["rebalance_interval_days"] = int(selected["rebalance_interval_days"])
+                    row["projected_backtest_sharpe"] = float(selected["projected_backtest_sharpe"])
+                    row["projected_total_return"] = float(selected["projected_total_return"])
+                    row["projected_mean_turnover"] = float(selected["projected_mean_turnover"])
+                return pd.DataFrame([row])
+
+        if leaderboard.empty:
+            return pd.DataFrame(
+                [
+                    {
+                        "model": "",
+                        "signal_path": "",
+                        "selection_method": "none",
+                    }
+                ]
+            )
+
+        top_model = str(leaderboard.index[0])
+        row = {
+            "model": top_model,
+            "signal_path": str(signal_paths.get(top_model, "")),
+            "selection_method": "leaderboard",
+        }
+        for column in leaderboard.columns:
+            row[column] = leaderboard.loc[top_model, column]
+        row["model"] = top_model
+        row["signal_path"] = str(signal_paths.get(top_model, row["signal_path"]))
+        row["selection_method"] = "leaderboard"
+        return pd.DataFrame([row])
+
+    def _select_from_sensitivity(self, sensitivity_report: pd.DataFrame) -> pd.Series | None:
+        required = {
+            "model",
+            "transaction_cost_bps",
+            "rebalance_interval_days",
+            "projected_backtest_sharpe",
+            "projected_total_return",
+        }
+        if not required.issubset(sensitivity_report.columns):
+            return None
+
+        candidates = sensitivity_report.copy()
+        candidates = candidates[candidates["model"].ne("cash")]
+        candidates = candidates[
+            candidates["projected_backtest_sharpe"].gt(0.0)
+            & candidates["projected_total_return"].gt(0.0)
+        ]
+        if candidates.empty:
+            return None
+
+        realistic = candidates[
+            np.isclose(
+                candidates["transaction_cost_bps"].astype(float),
+                float(self.transaction_cost_bps),
+            )
+        ]
+        if not realistic.empty:
+            candidates = realistic
+        else:
+            positive_cost = candidates[candidates["transaction_cost_bps"].astype(float).gt(0.0)]
+            if not positive_cost.empty:
+                candidates = positive_cost
+
+        ranked = candidates.sort_values(
+            [
+                "projected_backtest_sharpe",
+                "projected_total_return",
+                "projected_mean_turnover",
+            ],
+            ascending=[False, False, True],
+        )
+        return ranked.iloc[0]
 
     def _project_regime_model(
         self,
