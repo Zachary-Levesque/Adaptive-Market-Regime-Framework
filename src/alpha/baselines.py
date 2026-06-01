@@ -143,6 +143,72 @@ class WeightedTechnicalRegressor(SequenceRegressor):
         return scores.astype(np.float32, copy=False)
 
 
+class VolatilityAdjustedTechnicalRegressor(WeightedTechnicalRegressor):
+    """Technical baseline scaled by each sample's latest realized volatility."""
+
+    def __init__(
+        self,
+        name: str,
+        feature_weights: dict[str, float],
+        volatility_feature: str = "tech__volatility_21d",
+        volatility_floor: float = 0.05,
+        cross_sectional_normalize: bool = True,
+    ) -> None:
+        super().__init__(
+            name=name,
+            feature_weights=feature_weights,
+            cross_sectional_normalize=cross_sectional_normalize,
+        )
+        self.volatility_feature = volatility_feature
+        self.volatility_floor = float(volatility_floor)
+
+    def predict_dataset(self, dataset: Dataset, device: str = "cpu") -> np.ndarray:
+        if not self._is_fitted:
+            raise RuntimeError(f"{self.name} must be fit before prediction.")
+
+        features_tensor, _ = _resolve_dataset_tensors(dataset)
+        features = features_tensor.detach().cpu().numpy()
+        if len(features) == 0:
+            return np.array([], dtype=np.float32)
+
+        feature_names = _resolve_feature_names(dataset)
+        latest = features[:, -1, :]
+        scores = np.zeros(len(features), dtype=np.float32)
+        for feature_name, weight in self.feature_weights.items():
+            if feature_name in feature_names:
+                scores += float(weight) * latest[:, feature_names.index(feature_name)]
+
+        if self.volatility_feature in feature_names:
+            volatility = np.abs(latest[:, feature_names.index(self.volatility_feature)])
+            scores = scores / np.maximum(volatility, self.volatility_floor)
+
+        if self.cross_sectional_normalize:
+            scores = _normalize_by_date(scores, _resolve_sample_dates(dataset))
+
+        return scores.astype(np.float32, copy=False)
+
+
+class MultiHorizonTechnicalRegressor(WeightedTechnicalRegressor):
+    """Blend trend, reversal, and volatility features across multiple horizons."""
+
+    def __init__(self, name: str = "technical_multi_horizon") -> None:
+        super().__init__(
+            name=name,
+            feature_weights={
+                "tech__momentum_12_1": 0.30,
+                "tech__return_63d": 0.20,
+                "tech__return_21d": 0.15,
+                "tech__return_5d": -0.20,
+                "tech__return_1d": -0.10,
+                "tech__bollinger_zscore": -0.20,
+                "tech__price_to_ma200": 0.15,
+                "tech__price_to_ma50": 0.10,
+                "tech__volatility_21d": -0.15,
+                "market__vix_5d_change": -0.05,
+            },
+        )
+
+
 class DummyMeanRegressor:
     """Fallback regressor used when a baseline cannot be fit robustly."""
 
@@ -260,6 +326,37 @@ def build_default_baseline_specs(random_state: int = 42, include_tree_models: bo
                     "tech__return_5d": -0.15,
                     "tech__volatility_21d": -0.10,
                 },
+            ),
+        ),
+        BaselineSpec(
+            name="technical_multi_horizon",
+            factory=lambda _input_size: MultiHorizonTechnicalRegressor(),
+        ),
+        BaselineSpec(
+            name="vol_adjusted_momentum",
+            factory=lambda _input_size: VolatilityAdjustedTechnicalRegressor(
+                name="vol_adjusted_momentum",
+                feature_weights={
+                    "tech__momentum_12_1": 0.40,
+                    "tech__return_63d": 0.30,
+                    "tech__return_21d": 0.20,
+                    "tech__price_to_ma200": 0.15,
+                    "tech__volatility_63d": -0.10,
+                },
+                volatility_feature="tech__volatility_21d",
+            ),
+        ),
+        BaselineSpec(
+            name="vol_adjusted_reversal",
+            factory=lambda _input_size: VolatilityAdjustedTechnicalRegressor(
+                name="vol_adjusted_reversal",
+                feature_weights={
+                    "tech__bollinger_zscore": -0.50,
+                    "tech__return_5d": -0.30,
+                    "tech__return_1d": -0.15,
+                    "tech__volatility_21d": -0.10,
+                },
+                volatility_feature="tech__volatility_21d",
             ),
         ),
     ]
