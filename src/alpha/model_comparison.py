@@ -594,48 +594,69 @@ class AlphaModelComparator:
         transaction_cost_bps: float | None = None,
         rebalance_interval_days: int | None = None,
     ) -> dict[str, float]:
+        prepared = self._prepare_signal_projection(signals, returns)
+        if prepared is None:
+            return {
+                "projected_backtest_sharpe": 0.0,
+                "projected_total_return": 0.0,
+                "projected_mean_turnover": 0.0,
+            }
+        returns, raw_weights = prepared
+        target_weights = self._apply_rebalance_schedule(
+            raw_weights,
+            rebalance_interval_days=rebalance_interval_days,
+        )
+        cost_bps = self.transaction_cost_bps if transaction_cost_bps is None else float(transaction_cost_bps)
+        return self._project_from_weights(target_weights, returns, transaction_cost_bps=cost_bps)
+
+    def _prepare_signal_projection(
+        self,
+        signals: pd.DataFrame,
+        returns: pd.DataFrame,
+    ) -> tuple[pd.DataFrame, pd.DataFrame] | None:
         normalized_signals = self._normalize_frame(signals)
         normalized_returns = self._normalize_frame(returns)
         common_index = normalized_returns.index.intersection(normalized_signals.index).sort_values()
         common_columns = normalized_returns.columns.intersection(normalized_signals.columns).sort_values()
         if common_index.empty or common_columns.empty:
-            return {
-                "projected_backtest_sharpe": 0.0,
-                "projected_total_return": 0.0,
-                "projected_mean_turnover": 0.0,
-            }
+            return None
 
-        signals = normalized_signals.loc[common_index, common_columns]
-        returns = normalized_returns.loc[common_index, common_columns].fillna(0.0)
-        active_rows = signals.notna().any(axis=1)
+        aligned_signals = normalized_signals.loc[common_index, common_columns]
+        aligned_returns = normalized_returns.loc[common_index, common_columns].fillna(0.0)
+        active_rows = aligned_signals.notna().any(axis=1)
         if not active_rows.any():
-            return {
-                "projected_backtest_sharpe": 0.0,
-                "projected_total_return": 0.0,
-                "projected_mean_turnover": 0.0,
-            }
+            return None
 
         first_active = active_rows[active_rows].index[0]
-        signals = signals.loc[signals.index >= first_active]
-        returns = returns.loc[returns.index >= first_active]
+        aligned_signals = aligned_signals.loc[aligned_signals.index >= first_active]
+        aligned_returns = aligned_returns.loc[aligned_returns.index >= first_active]
+        raw_weights = self._construct_signal_weight_frame(aligned_signals)
+        return aligned_returns, raw_weights
 
-        raw_weights = pd.DataFrame(0.0, index=signals.index, columns=signals.columns)
-        for date, row in signals.iterrows():
-            weights = self._construct_fold_weights(
-                pd.DataFrame({"ticker": row.index, "prediction": pd.to_numeric(row, errors="coerce").to_numpy()})
-            )
-            if not weights.empty:
-                raw_weights.loc[date, weights.index] = weights
-
-        target_weights = self._apply_rebalance_schedule(
-            raw_weights,
-            rebalance_interval_days=rebalance_interval_days,
-        )
+    def _project_from_weights(
+        self,
+        target_weights: pd.DataFrame,
+        returns: pd.DataFrame,
+        transaction_cost_bps: float,
+    ) -> dict[str, float]:
         applied_weights = target_weights.shift(1).reindex(returns.index).fillna(0.0)
-        gross_returns = (applied_weights * returns).sum(axis=1)
-        turnover = applied_weights.diff().abs().sum(axis=1).fillna(applied_weights.abs().sum(axis=1))
-        cost_bps = self.transaction_cost_bps if transaction_cost_bps is None else float(transaction_cost_bps)
-        transaction_cost = turnover * (cost_bps / 10_000.0)
+        applied_values = applied_weights.to_numpy(dtype=float, copy=False)
+        return_values = returns.to_numpy(dtype=float, copy=False)
+        gross_returns = pd.Series(
+            np.sum(applied_values * return_values, axis=1),
+            index=returns.index,
+        )
+        if len(applied_values):
+            initial_turnover = np.abs(applied_values[0]).sum()
+            turnover_values = np.empty(len(applied_values), dtype=float)
+            turnover_values[0] = initial_turnover
+            if len(applied_values) > 1:
+                turnover_values[1:] = np.abs(np.diff(applied_values, axis=0)).sum(axis=1)
+        else:
+            turnover_values = np.array([], dtype=float)
+
+        turnover = pd.Series(turnover_values, index=returns.index)
+        transaction_cost = turnover * (transaction_cost_bps / 10_000.0)
         strategy_returns = gross_returns - transaction_cost
 
         return {
@@ -643,6 +664,32 @@ class AlphaModelComparator:
             "projected_total_return": float((1.0 + strategy_returns).prod() - 1.0),
             "projected_mean_turnover": float(turnover.mean()) if len(turnover) else 0.0,
         }
+
+    def _construct_signal_weight_frame(self, signals: pd.DataFrame) -> pd.DataFrame:
+        """Convert a full signal matrix into long/short weights with minimal pandas overhead."""
+        values = signals.to_numpy(dtype=float, copy=True)
+        weights = np.zeros(values.shape, dtype=float)
+        gross_side = self.max_gross_exposure / 2.0
+
+        for row_idx in range(values.shape[0]):
+            row = values[row_idx]
+            valid = np.flatnonzero(np.isfinite(row))
+            if len(valid) == 0:
+                continue
+
+            n_assets = len(valid)
+            n_long = max(1, int(np.ceil(n_assets * self.long_fraction)))
+            n_short = max(1, int(np.ceil(n_assets * self.short_fraction)))
+            ranked = valid[np.argsort(row[valid], kind="mergesort")]
+            short_idx = ranked[:n_short]
+            long_idx = ranked[-n_long:]
+            if np.intersect1d(long_idx, short_idx, assume_unique=False).size:
+                continue
+
+            weights[row_idx, long_idx] = gross_side / len(long_idx)
+            weights[row_idx, short_idx] = -gross_side / len(short_idx)
+
+        return pd.DataFrame(weights, index=signals.index, columns=signals.columns)
 
     def _apply_rebalance_schedule(
         self,
@@ -676,13 +723,37 @@ class AlphaModelComparator:
     ) -> pd.DataFrame:
         rows: list[dict[str, float | int | str]] = []
         for model_name, signals in signal_frames.items():
+            prepared = self._prepare_signal_projection(signals, returns)
+            if prepared is None:
+                for cost_bps in transaction_cost_bps_values:
+                    for interval in rebalance_interval_values:
+                        rows.append(
+                            {
+                                "model": model_name,
+                                "transaction_cost_bps": float(cost_bps),
+                                "rebalance_interval_days": int(interval),
+                                "projected_backtest_sharpe": 0.0,
+                                "projected_total_return": 0.0,
+                                "projected_mean_turnover": 0.0,
+                            }
+                        )
+                continue
+
+            aligned_returns, raw_weights = prepared
+            scheduled_by_interval = {
+                interval: self._apply_rebalance_schedule(
+                    raw_weights,
+                    rebalance_interval_days=interval,
+                )
+                for interval in rebalance_interval_values
+            }
+
             for cost_bps in transaction_cost_bps_values:
-                for interval in rebalance_interval_values:
-                    stats = self._project_signal_backtest(
-                        signals=signals,
-                        returns=returns,
-                        transaction_cost_bps=cost_bps,
-                        rebalance_interval_days=interval,
+                for interval, target_weights in scheduled_by_interval.items():
+                    stats = self._project_from_weights(
+                        target_weights,
+                        aligned_returns,
+                        transaction_cost_bps=float(cost_bps),
                     )
                     rows.append(
                         {
