@@ -223,6 +223,7 @@ class AlphaModelComparator:
                     "selection_method": "sensitivity",
                     "transaction_cost_bps": float(selected["transaction_cost_bps"]),
                     "rebalance_interval_days": int(selected["rebalance_interval_days"]),
+                    "weighting_method": str(selected.get("weighting_method", self.weighting_method)),
                     "projected_backtest_sharpe": float(selected["projected_backtest_sharpe"]),
                     "projected_total_return": float(selected["projected_total_return"]),
                     "projected_mean_turnover": float(selected["projected_mean_turnover"]),
@@ -235,6 +236,7 @@ class AlphaModelComparator:
                     row["selection_method"] = "sensitivity"
                     row["transaction_cost_bps"] = float(selected["transaction_cost_bps"])
                     row["rebalance_interval_days"] = int(selected["rebalance_interval_days"])
+                    row["weighting_method"] = str(selected.get("weighting_method", self.weighting_method))
                     row["projected_backtest_sharpe"] = float(selected["projected_backtest_sharpe"])
                     row["projected_total_return"] = float(selected["projected_total_return"])
                     row["projected_mean_turnover"] = float(selected["projected_mean_turnover"])
@@ -271,6 +273,7 @@ class AlphaModelComparator:
             "model",
             "transaction_cost_bps",
             "rebalance_interval_days",
+            "weighting_method",
             "projected_backtest_sharpe",
             "projected_total_return",
         }
@@ -292,10 +295,7 @@ class AlphaModelComparator:
             return None
 
         realistic = candidates[
-            np.isclose(
-                candidates["transaction_cost_bps"].astype(float),
-                float(self.transaction_cost_bps),
-            )
+            np.isclose(candidates["transaction_cost_bps"].astype(float), float(self.transaction_cost_bps))
         ]
         if not realistic.empty:
             candidates = realistic
@@ -858,8 +858,9 @@ class AlphaModelComparator:
         returns: pd.DataFrame,
         transaction_cost_bps: float | None = None,
         rebalance_interval_days: int | None = None,
+        weighting_method: str | None = None,
     ) -> dict[str, float]:
-        prepared = self._prepare_signal_projection(signals, returns)
+        prepared = self._prepare_signal_projection(signals, returns, weighting_method=weighting_method)
         if prepared is None:
             return {
                 "projected_backtest_sharpe": 0.0,
@@ -878,6 +879,7 @@ class AlphaModelComparator:
         self,
         signals: pd.DataFrame,
         returns: pd.DataFrame,
+        weighting_method: str | None = None,
     ) -> tuple[pd.DataFrame, pd.DataFrame] | None:
         normalized_signals = self._normalize_frame(signals)
         normalized_returns = self._normalize_frame(returns)
@@ -895,7 +897,11 @@ class AlphaModelComparator:
         first_active = active_rows[active_rows].index[0]
         aligned_signals = aligned_signals.loc[aligned_signals.index >= first_active]
         aligned_returns = aligned_returns.loc[aligned_returns.index >= first_active]
-        raw_weights = self._construct_signal_weight_frame(aligned_signals, returns=aligned_returns)
+        raw_weights = self._construct_signal_weight_frame(
+            aligned_signals,
+            returns=aligned_returns,
+            weighting_method=weighting_method,
+        )
         return aligned_returns, raw_weights
 
     def _project_from_weights(
@@ -930,13 +936,19 @@ class AlphaModelComparator:
             "projected_mean_turnover": float(turnover.mean()) if len(turnover) else 0.0,
         }
 
-    def _construct_signal_weight_frame(self, signals: pd.DataFrame, returns: pd.DataFrame | None = None) -> pd.DataFrame:
+    def _construct_signal_weight_frame(
+        self,
+        signals: pd.DataFrame,
+        returns: pd.DataFrame | None = None,
+        weighting_method: str | None = None,
+    ) -> pd.DataFrame:
         """Convert a full signal matrix into long/short weights with minimal pandas overhead."""
+        method = self.weighting_method if weighting_method is None else str(weighting_method)
         values = signals.to_numpy(dtype=float, copy=True)
         weights = np.zeros(values.shape, dtype=float)
         gross_side = self.max_gross_exposure / 2.0
         volatility_values = None
-        if returns is not None and self.weighting_method == "inverse_volatility":
+        if returns is not None and method == "inverse_volatility":
             volatility = returns.reindex(index=signals.index, columns=signals.columns).rolling(
                 self.volatility_lookback,
                 min_periods=min(self.volatility_lookback, max(2, self.volatility_lookback // 3)),
@@ -958,8 +970,20 @@ class AlphaModelComparator:
             if np.intersect1d(long_idx, short_idx, assume_unique=False).size:
                 continue
 
-            weights[row_idx, long_idx] = self._side_weight_values(long_idx, row_idx, gross_side, volatility_values)
-            weights[row_idx, short_idx] = -self._side_weight_values(short_idx, row_idx, gross_side, volatility_values)
+            weights[row_idx, long_idx] = self._side_weight_values(
+                long_idx,
+                row_idx,
+                gross_side,
+                volatility_values,
+                weighting_method=method,
+            )
+            weights[row_idx, short_idx] = -self._side_weight_values(
+                short_idx,
+                row_idx,
+                gross_side,
+                volatility_values,
+                weighting_method=method,
+            )
 
         return pd.DataFrame(weights, index=signals.index, columns=signals.columns)
 
@@ -969,8 +993,10 @@ class AlphaModelComparator:
         row_idx: int,
         gross_side: float,
         volatility_values: np.ndarray | None,
+        weighting_method: str | None = None,
     ) -> np.ndarray:
-        if self.weighting_method != "inverse_volatility" or volatility_values is None:
+        method = self.weighting_method if weighting_method is None else str(weighting_method)
+        if method != "inverse_volatility" or volatility_values is None:
             return np.full(len(asset_indices), gross_side / len(asset_indices), dtype=float)
 
         vols = volatility_values[row_idx, asset_indices]
