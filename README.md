@@ -169,13 +169,13 @@ Current local artifact snapshot from `data/results/performance_report.parquet`:
 
 | Metric | AMRF Strategy | Buy & Hold SPY | Equal Weight | 63D Momentum |
 |---|---|---|---|---|
-| Annual Return | 1.65% | 18.49% | 17.80% | 0.34% |
-| Sharpe Ratio | 0.20 | 1.25 | 1.05 | 0.09 |
-| Max Drawdown | -18.24% | -20.49% | -37.16% | -29.58% |
-| Calmar Ratio | 0.09 | 0.90 | 0.48 | 0.02 |
-| Win Rate | 50.48% | 54.22% | 56.65% | 50.88% |
+| Annual Return | 2.28% | 19.81% | 19.22% | -3.44% |
+| Sharpe Ratio | 0.25 | 1.32 | 1.10 | -0.19 |
+| Max Drawdown | -25.18% | -20.49% | -37.16% | -37.87% |
+| Calmar Ratio | 0.09 | 0.97 | 0.52 | -0.09 |
+| Win Rate | 51.00% | 54.62% | 56.88% | 49.60% |
  
-Alpha diagnostics currently score the selected signal against a 5-trading-day forward-return target. The latest selected signal is `defensive_regime_selector`: mean IC 0.0327, mean rank IC 0.0335, IC positive on 53.37% of scored days. Regime-level rank IC is positive in all four regimes, but realized Sharpe and benchmark-relative performance remain below the readiness gate. This means the next project step should improve portfolio construction and data coverage before adding reinforcement learning position sizing.
+Alpha diagnostics currently score the selected signal against a 5-trading-day forward-return target. The latest selected signal is `defensive_regime_selector`: mean IC 0.0193, mean rank IC 0.0243, IC positive on 51.06% of scored days. The signal is active in regimes 1, 2, and 3, with positive rank IC in each active regime, but realized Sharpe and benchmark-relative performance remain below the readiness gate. This means the next project step should improve data coverage and risk-adjusted portfolio construction before adding reinforcement learning position sizing.
 
 > Note: Results are from the current local walk-forward artifacts, not final claimed performance. Past performance does not guarantee future results.
  
