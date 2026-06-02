@@ -14,6 +14,7 @@ class ReadinessThresholds:
     min_sharpe: float = 0.5
     min_total_return: float = 0.0
     min_rank_ic: float = 0.0
+    min_regime_rank_ic: float = 0.0
     min_ic_positive_rate: float = 0.5
     require_stress_overlap: bool = True
     require_all_stress_scenarios: bool = True
@@ -34,6 +35,7 @@ class AlphaReadinessChecker:
         diagnostics_summary: pd.DataFrame,
         performance_report: pd.DataFrame,
         stress_report: pd.DataFrame | None = None,
+        regime_diagnostics: pd.DataFrame | None = None,
     ) -> pd.DataFrame:
         selected = selection.iloc[0] if not selection.empty else pd.Series(dtype=object)
         diagnostics = diagnostics_summary.iloc[0] if not diagnostics_summary.empty else pd.Series(dtype=object)
@@ -82,6 +84,7 @@ class AlphaReadinessChecker:
             ),
         ]
         rows.extend(self._benchmark_rows(performance_report, strategy))
+        rows.extend(self._regime_rows(regime_diagnostics))
 
         if stress_report is not None and not stress_report.empty:
             n_days = pd.to_numeric(stress_report.get("n_days", pd.Series(dtype=float)), errors="coerce").fillna(0)
@@ -151,6 +154,27 @@ class AlphaReadinessChecker:
                     excess_total_return,
                     f"Selected strategy total return should beat {benchmark_name} by at least "
                     f"{self.thresholds.min_benchmark_excess_total_return}.",
+                )
+            )
+
+        return rows
+
+    def _regime_rows(self, regime_diagnostics: pd.DataFrame | None) -> list[dict[str, object]]:
+        if regime_diagnostics is None or regime_diagnostics.empty:
+            return []
+
+        rows: list[dict[str, object]] = []
+        if "mean_rank_ic" not in regime_diagnostics.columns:
+            return rows
+
+        for regime, row in regime_diagnostics.iterrows():
+            mean_rank_ic = float(row.get("mean_rank_ic", 0.0))
+            rows.append(
+                self._row(
+                    f"regime_rank_ic_{regime}",
+                    mean_rank_ic > self.thresholds.min_regime_rank_ic,
+                    mean_rank_ic,
+                    f"Selected signal should have positive mean rank IC in regime {regime}.",
                 )
             )
 
