@@ -19,8 +19,9 @@ class AlphaDiagnosticsArtifacts:
 class AlphaDiagnostics:
     """Evaluate whether alpha forecasts rank and sign next-day returns."""
 
-    def __init__(self, min_assets_per_day: int = 3) -> None:
+    def __init__(self, min_assets_per_day: int = 3, forward_return_horizon: int = 1) -> None:
         self.min_assets_per_day = min_assets_per_day
+        self.forward_return_horizon = max(1, int(forward_return_horizon))
 
     def evaluate(
         self,
@@ -28,7 +29,11 @@ class AlphaDiagnostics:
         returns: pd.DataFrame,
         regime_labels: pd.DataFrame | pd.Series | None = None,
     ) -> AlphaDiagnosticsArtifacts:
-        signals, forward_returns = self._align_signals_and_forward_returns(alpha_signals, returns)
+        signals, forward_returns = self._align_signals_and_forward_returns(
+            alpha_signals,
+            returns,
+            horizon=self.forward_return_horizon,
+        )
         regimes = self._normalize_regime_labels(regime_labels).reindex(signals.index) if regime_labels is not None else None
 
         rows: list[dict[str, float | int | pd.Timestamp]] = []
@@ -77,10 +82,11 @@ class AlphaDiagnostics:
     def _align_signals_and_forward_returns(
         alpha_signals: pd.DataFrame,
         returns: pd.DataFrame,
+        horizon: int = 1,
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         signals = AlphaDiagnostics._normalize_frame(alpha_signals)
         normalized_returns = AlphaDiagnostics._normalize_frame(returns)
-        forward_returns = normalized_returns.shift(-1)
+        forward_returns = AlphaDiagnostics._forward_returns(normalized_returns, horizon)
 
         common_index = signals.index.intersection(forward_returns.index).sort_values()
         common_columns = signals.columns.intersection(forward_returns.columns).sort_values()
@@ -93,6 +99,15 @@ class AlphaDiagnostics:
         forward_returns = forward_returns.loc[common_index, common_columns]
         active = signals.notna().any(axis=1)
         return signals.loc[active], forward_returns.loc[active]
+
+    @staticmethod
+    def _forward_returns(returns: pd.DataFrame, horizon: int) -> pd.DataFrame:
+        horizon = max(1, int(horizon))
+        forward = pd.DataFrame(0.0, index=returns.index, columns=returns.columns)
+        for offset in range(1, horizon + 1):
+            forward = forward.add(returns.shift(-offset), fill_value=0.0)
+        valid_counts = sum(returns.shift(-offset).notna().astype(int) for offset in range(1, horizon + 1))
+        return forward.where(valid_counts == horizon)
 
     @staticmethod
     def _summarize(daily: pd.DataFrame, label: str) -> pd.DataFrame:
@@ -179,4 +194,3 @@ class AlphaDiagnostics:
         normalized = pd.Series(labels).copy()
         normalized.index = pd.to_datetime(normalized.index).tz_localize(None)
         return pd.to_numeric(normalized, errors="coerce").sort_index()
-
