@@ -21,7 +21,7 @@ Implemented and tested:
 1. **Builds** historical prices, returns, factors, macro data, technical features, and regime features
 2. **Detects** market regimes with HMM probabilities, GMM validation, Bayesian smoothing, and Kalman filtering
 3. **Trains and compares** regime-specific LSTM/Transformer ensembles against simpler baseline alpha models
-4. **Selects** an alpha signal using walk-forward, transaction-cost, rebalance, and projected-backtest evidence
+4. **Selects** an alpha signal using walk-forward, transaction-cost, rebalance, forward-return horizon, and projected-backtest evidence
 5. **Backtests** the selected signal against SPY, equal-weight, and momentum baselines
 6. **Reports** alpha diagnostics, regime-conditional results, stress tests, and pre-RL readiness checks
 
@@ -169,13 +169,13 @@ Current local artifact snapshot from `data/results/performance_report.parquet`:
 
 | Metric | AMRF Strategy | Buy & Hold SPY | Equal Weight | 63D Momentum |
 |---|---|---|---|---|
-| Annual Return | 2.02% | 18.49% | 17.80% | 1.67% |
-| Sharpe Ratio | 0.24 | 1.25 | 1.05 | 0.19 |
-| Max Drawdown | -24.15% | -20.49% | -37.16% | -29.58% |
-| Calmar Ratio | 0.08 | 0.90 | 0.48 | 0.06 |
-| Win Rate | 51.23% | 54.22% | 56.65% | 50.88% |
+| Annual Return | 1.09% | 18.49% | 17.80% | 1.67% |
+| Sharpe Ratio | 0.15 | 1.25 | 1.05 | 0.19 |
+| Max Drawdown | -18.24% | -20.49% | -37.16% | -29.58% |
+| Calmar Ratio | 0.06 | 0.90 | 0.48 | 0.06 |
+| Win Rate | 50.48% | 54.22% | 56.65% | 50.88% |
  
-Alpha diagnostics currently show weak but nonzero rank signal: mean IC 0.0162, mean rank IC 0.0156, IC positive on 47.84% of scored days. This means the next project step should improve alpha quality before adding reinforcement learning position sizing.
+Alpha diagnostics currently score the selected signal against a 5-trading-day forward-return target. The latest selected signal is `technical_trend`: mean IC 0.0137, mean rank IC 0.0161, IC positive on 50.87% of scored days. Regime-level diagnostics are mixed: regimes 0 and 1 are positive, while regimes 2 and 3 are negative. This means the next project step should improve regime-specific alpha quality before adding reinforcement learning position sizing.
 
 > Note: Results are from the current local walk-forward artifacts, not final claimed performance. Past performance does not guarantee future results.
  
