@@ -84,6 +84,9 @@ def main() -> None:
             transaction_cost_bps=transaction_cost_bps,
             benchmark=config.data.benchmark,
             rebalance_interval_days=rebalance_interval_days,
+            weighting_method=config.risk.weighting_method,
+            volatility_lookback=config.risk.volatility_lookback,
+            volatility_floor=config.risk.volatility_floor,
         ),
     )
     artifacts = backtester.run(start=args.start, end=args.end, stress_periods=config.risk.stress_periods)
