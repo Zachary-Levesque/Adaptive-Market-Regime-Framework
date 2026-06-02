@@ -1,6 +1,6 @@
 # AMRF — Adaptive Market Regime Framework
 
-A research-grade quantitative trading system that detects market regimes via Hidden Markov Models and deploys regime-specific ML strategies with a Reinforcement Learning position-sizing agent.
+A research-grade quantitative research pipeline that detects market regimes, compares regime-aware alpha models, and backtests the selected signal with explicit risk and readiness reporting.
  
 ---
  
@@ -10,20 +10,30 @@ Most trading strategies are built assuming markets behave consistently. They don
  
 A momentum strategy that thrives in a bull trend destroys capital in a sideways mean-reverting market. A volatility strategy optimized for calm periods blows up in a crisis. The fundamental problem is that virtually all retail and academic quant models are **regime-blind** — they apply a single static strategy to a dynamic, non-stationary market. This leads to catastrophic drawdowns precisely when capital preservation matters most.
  
-**AMRF solves this** by modeling financial markets as a dynamic hidden system with four distinct regimes, deploying the optimal ML-trained strategy for each, and sizing positions through a reinforcement learning agent trained on 25 years of market history.
+**AMRF addresses this research problem** by modeling financial markets as a dynamic hidden system with four distinct regimes, training or selecting alpha models by regime, and testing whether the resulting signal is strong enough to justify later portfolio-construction or reinforcement-learning work.
  
 ---
  
-## What It Does
- 
-Every morning, AMRF:
- 
-1. **Detects** the current market regime with probability confidence
-2. **Forecasts** expected returns per asset using regime-specific LSTM models
-3. **Generates** ranked trade signals with conviction scores
-4. **Sizes** positions using a PPO reinforcement learning agent
-5. **Reports** full risk metrics and explains every recommendation
-Example daily output:
+## Current Status
+
+Implemented and tested:
+
+1. **Builds** historical prices, returns, factors, macro data, technical features, and regime features
+2. **Detects** market regimes with HMM probabilities, GMM validation, Bayesian smoothing, and Kalman filtering
+3. **Trains and compares** regime-specific LSTM/Transformer ensembles against simpler baseline alpha models
+4. **Selects** an alpha signal using walk-forward, transaction-cost, rebalance, and projected-backtest evidence
+5. **Backtests** the selected signal against SPY, equal-weight, and momentum baselines
+6. **Reports** alpha diagnostics, regime-conditional results, stress tests, and pre-RL readiness checks
+
+Planned but not implemented:
+
+1. PPO reinforcement-learning position sizing
+2. Intraday execution through Alpaca
+3. FastAPI/React dashboard and live daily recommendation workflow
+
+The project should not move to RL until `python -m src.alpha.build_readiness` passes. The current local artifacts show a positive but weak alpha signal that underperforms simple benchmarks.
+
+Target daily output once the planned live layer exists:
  
 ```
 ═══════════════════════════════════════════════════
@@ -64,12 +74,12 @@ Example daily output:
 │                     Model (GMM)         Walk-forward CV     │
 │                    Bayesian trans.                          │
 │                                                             │
-│  RISK ENGINE       RL AGENT             OUTPUT              │
-│  ──────────        ──────────           ──────              │
-│  Monte Carlo ◄───  PPO Agent    ◄───   Signals             │
-│  CVaR/VaR          Position             Rankings            │
-│  Stress tests      sizing               Dashboard           │
-│  Backtester        Kelly-informed       CLI report          │
+│  RISK ENGINE       READINESS GATE       OUTPUT              │
+│  ──────────        ──────────────       ──────              │
+│  Monte Carlo ◄───  Alpha quality ◄───  Signals             │
+│  CVaR/VaR          Benchmark tests      Rankings            │
+│  Stress tests      Stress coverage      CLI reports         │
+│  Backtester        Pre-RL decision      Parquet artifacts   │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -99,7 +109,7 @@ Example daily output:
 | Kalman Filter | Signal Processing | State estimation & noise reduction |
 | LSTM (PyTorch) | Alpha Generation | Regime-specific return forecasting |
 | Transformer (PyTorch) | Alpha Generation | Attention-based factor modeling |
-| PPO (Stable-Baselines3) | RL Agent | Dynamic position sizing |
+| PPO (Stable-Baselines3) | Planned RL Agent | Future dynamic position sizing |
 | Fama-French 5-Factor | Alpha Generation | Systematic risk factor exposure |
 | Monte Carlo Simulation | Risk Engine | VaR & CVaR estimation |
 | Markowitz MVO | Portfolio Construction | Efficient frontier optimization |
@@ -115,12 +125,12 @@ Example daily output:
 | stable-baselines3 | Reinforcement learning |
 | pandas / numpy | Data manipulation |
 | yfinance | Historical market data |
-| alpaca-trade-api | Intraday data & live trading |
+| alpaca-trade-api | Planned intraday data & live trading |
 | pandas-datareader | Fama-French factor data |
 | scipy | Statistical functions |
 | matplotlib / plotly | Visualization |
-| FastAPI | Dashboard backend |
-| React | Dashboard frontend |
+| FastAPI | Planned dashboard backend |
+| React | Planned dashboard frontend |
 | Docker | Containerization |
  
 ---
@@ -136,16 +146,19 @@ Fits a Hidden Markov Model with Gaussian emissions to identify 4 latent market r
 ### Module 3 — Regime-Specific Alpha Models
 For each of the 4 regimes, a dedicated LSTM + Transformer model is trained on in-regime data only, using Fama-French factors and technical features as inputs. Walk-forward cross-validation prevents lookahead bias.
  
-### Module 4 — Reinforcement Learning Position Sizing Agent
-A PPO agent is trained in a custom OpenAI Gym environment. State space includes current regime probabilities, factor exposures, LSTM forecasts, and portfolio state. Action space is continuous position weights. Reward function is risk-adjusted return (Sharpe ratio) with drawdown penalty.
+### Module 4 — Alpha Selection, Diagnostics, and Readiness
+Compares alpha candidates against baselines, writes a selected signal manifest, diagnoses IC/rank-IC quality, and checks whether the selected signal is strong enough for RL work. The readiness gate includes active-history, alpha-quality, benchmark-relative, and stress-coverage checks.
  
 ### Module 5 — Risk Engine & Backtester
 Full backtesting engine with Monte Carlo VaR/CVaR, historical stress testing (2008, COVID-19, 2022), and performance attribution. Reports Sharpe, Sortino, Calmar, max drawdown, win rate, and regime-conditional performance.
  
-### Module 6 — Intraday Execution Layer
+### Planned Module 6 — Reinforcement Learning Position Sizing Agent
+A PPO position-sizing agent is planned, but should only be built after the selected alpha signal passes the readiness gate.
+
+### Planned Module 7 — Intraday Execution Layer
 Uses 5-minute bar data from Alpaca API for intraday entry/exit timing. VWAP deviation signals, order flow imbalance detection, and intraday momentum confirmation before executing daily signals.
  
-### Module 7 — Dashboard
+### Planned Module 8 — Dashboard
 Interactive React dashboard showing live regime state, current signals, portfolio performance, risk metrics, and regime history visualization. FastAPI backend serves all model outputs via REST API.
  
 ---
@@ -156,13 +169,13 @@ Current local artifact snapshot from `data/results/performance_report.parquet`:
 
 | Metric | AMRF Strategy | Buy & Hold SPY | Equal Weight | 63D Momentum |
 |---|---|---|---|---|
-| Annual Return | 1.08% | 16.51% | 8.83% | -4.01% |
-| Sharpe Ratio | 0.15 | 1.04 | 0.54 | -0.21 |
-| Max Drawdown | -15.62% | -13.25% | -37.16% | -20.13% |
-| Calmar Ratio | 0.07 | 1.25 | 0.24 | -0.20 |
-| Win Rate | 50.83% | 53.31% | 54.02% | 47.99% |
+| Annual Return | 2.02% | 18.49% | 17.80% | 1.67% |
+| Sharpe Ratio | 0.24 | 1.25 | 1.05 | 0.19 |
+| Max Drawdown | -24.15% | -20.49% | -37.16% | -29.58% |
+| Calmar Ratio | 0.08 | 0.90 | 0.48 | 0.06 |
+| Win Rate | 51.23% | 54.22% | 56.65% | 50.88% |
  
-Alpha diagnostics currently show weak but nonzero rank signal: mean IC 0.0150, mean rank IC 0.0106, IC positive on 52.07% of scored days. This means the next project step should improve alpha quality before adding reinforcement learning position sizing.
+Alpha diagnostics currently show weak but nonzero rank signal: mean IC 0.0162, mean rank IC 0.0156, IC positive on 47.84% of scored days. This means the next project step should improve alpha quality before adding reinforcement learning position sizing.
 
 > Note: Results are from the current local walk-forward artifacts, not final claimed performance. Past performance does not guarantee future results.
  
@@ -189,33 +202,21 @@ AMRF/
 │   ├── alpha/
 │   │   ├── lstm.py             # LSTM model per regime
 │   │   ├── transformer.py      # Transformer model
+│   │   ├── model_comparison.py # Baselines, selector, cost/rebalance sensitivity
+│   │   ├── diagnostics.py      # Alpha IC/rank-IC diagnostics
+│   │   ├── readiness.py        # Pre-RL readiness gate
 │   │   └── walk_forward.py     # Walk-forward CV
-│   ├── rl/
-│   │   ├── environment.py      # Custom Gym environment
-│   │   ├── agent.py            # PPO agent
-│   │   └── reward.py           # Reward function
 │   ├── risk/
 │   │   ├── monte_carlo.py      # Monte Carlo VaR/CVaR
 │   │   ├── stress_test.py      # Historical stress tests
+│   │   ├── backtester.py       # Selected-signal backtester
 │   │   └── metrics.py          # Performance metrics
-│   ├── execution/
-│   │   ├── intraday.py         # Intraday signals
-│   │   └── alpaca.py           # Alpaca API integration
-│   └── dashboard/
-│       ├── backend/            # FastAPI
-│       └── frontend/           # React
-├── notebooks/
-│   ├── 01_regime_analysis.ipynb
-│   ├── 02_alpha_models.ipynb
-│   ├── 03_rl_training.ipynb
-│   └── 04_backtest_results.ipynb
 ├── tests/
 ├── configs/
 │   └── config.yaml
 ├── requirements.txt
-├── docker-compose.yml
 ├── README.md
-└── INSTRUCTIONS.md
+└── instructions.md
 ```
  
 ---
@@ -231,31 +232,25 @@ cd AMRF
 pip install -r requirements.txt
  
 # Run data pipeline
-python src/data/ingestion.py
+python -m src.data.build_phase1
  
 # Train regime model
-python src/regime/hmm.py
+python -m src.regime.build_phase2
  
-# Train alpha models
-python src/alpha/lstm.py
+# Train regime-specific alpha ensemble
+python -m src.alpha.build_phase3
 
-# Diagnose alpha signal quality
-python -m src.alpha.build_diagnostics
-
-# Compare alpha models against baselines
+# Compare alpha models against baselines and select signal
 python -m src.alpha.build_model_comparison
 
-# Train RL agent
-python src/rl/agent.py
- 
 # Run backtest
 python -m src.risk.build_phase4
 
-# Phase 4 will use the selected signal source from
-# data/processed/alpha_signal_selection.parquet when it exists.
- 
-# Launch dashboard
-./run-local.sh
+# Diagnose selected signal quality
+python -m src.alpha.build_diagnostics
+
+# Check whether the selected alpha is ready for RL work
+python -m src.alpha.build_readiness
 ```
  
 ---
