@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from io import StringIO
+import os
 import time
 from dataclasses import dataclass
 from typing import Iterable
@@ -39,6 +40,7 @@ class MarketDataIngester:
         allow_remote_downloads: bool = False,
         retry_attempts: int = 3,
         retry_delay_seconds: float = 2.0,
+        stooq_api_key: str | None = None,
     ):
         self.max_forward_fill = max_forward_fill
         self.max_missing_fraction = max_missing_fraction
@@ -47,6 +49,7 @@ class MarketDataIngester:
         self.allow_remote_downloads = allow_remote_downloads
         self.retry_attempts = retry_attempts
         self.retry_delay_seconds = retry_delay_seconds
+        self.stooq_api_key = stooq_api_key or os.getenv("STOOQ_API_KEY")
 
     @dataclass(frozen=True)
     class LocalTickerStatus:
@@ -496,14 +499,18 @@ class MarketDataIngester:
     def _fetch_stooq_csv(self, symbol: str, start: str, end: str) -> pd.DataFrame:
         start_ts = pd.Timestamp(start)
         end_ts = pd.Timestamp(end)
+        params = {
+            "s": symbol,
+            "i": "d",
+            "d1": start_ts.strftime("%Y%m%d"),
+            "d2": end_ts.strftime("%Y%m%d"),
+        }
+        if self.stooq_api_key:
+            params["apikey"] = self.stooq_api_key
+
         response = requests.get(
             "https://stooq.com/q/d/l/",
-            params={
-                "s": symbol,
-                "i": "d",
-                "d1": start_ts.strftime("%Y%m%d"),
-                "d2": end_ts.strftime("%Y%m%d"),
-            },
+            params=params,
             headers={"User-Agent": "Mozilla/5.0"},
             timeout=20,
         )
