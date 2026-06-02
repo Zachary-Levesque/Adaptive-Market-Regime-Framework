@@ -36,6 +36,7 @@ def test_resolve_signal_selection_includes_execution_settings(tmp_path: Path):
                 "signal_path": str(selected_path),
                 "transaction_cost_bps": 10.0,
                 "rebalance_interval_days": 5,
+                "weighting_method": "inverse_volatility",
             }
         ]
     ).to_parquet(selection_path)
@@ -52,6 +53,7 @@ def test_resolve_signal_selection_includes_execution_settings(tmp_path: Path):
     assert selection.signal_path == selected_path
     assert selection.transaction_cost_bps == 10.0
     assert selection.rebalance_interval_days == 5
+    assert selection.weighting_method == "inverse_volatility"
 
 
 def test_resolve_signal_selection_override_ignores_manifest_settings(tmp_path: Path):
@@ -79,6 +81,7 @@ def test_resolve_signal_selection_override_ignores_manifest_settings(tmp_path: P
     assert selection.signal_path == override_path
     assert selection.transaction_cost_bps is None
     assert selection.rebalance_interval_days is None
+    assert selection.weighting_method is None
 
 
 def test_resolve_signal_path_falls_back_to_config_path(tmp_path: Path):
