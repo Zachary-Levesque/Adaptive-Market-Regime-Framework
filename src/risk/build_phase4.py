@@ -17,6 +17,7 @@ class SignalSelection:
     signal_path: Path
     transaction_cost_bps: float | None = None
     rebalance_interval_days: int | None = None
+    weighting_method: str | None = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -72,6 +73,7 @@ def main() -> None:
         if selection.rebalance_interval_days is not None
         else config.risk.rebalance_interval_days
     )
+    weighting_method = selection.weighting_method or config.risk.weighting_method
 
     backtester = AMRFBacktester(
         returns=returns,
@@ -84,7 +86,7 @@ def main() -> None:
             transaction_cost_bps=transaction_cost_bps,
             benchmark=config.data.benchmark,
             rebalance_interval_days=rebalance_interval_days,
-            weighting_method=config.risk.weighting_method,
+            weighting_method=weighting_method,
             volatility_lookback=config.risk.volatility_lookback,
             volatility_floor=config.risk.volatility_floor,
         ),
@@ -96,6 +98,7 @@ def main() -> None:
     print(f"\nSignals used: {selection.signal_path}")
     print(f"Transaction cost bps: {transaction_cost_bps}")
     print(f"Rebalance interval days: {rebalance_interval_days}")
+    print(f"Weighting method: {weighting_method}")
 
 
 def resolve_signal_path(config, override: str | None = None):
@@ -116,6 +119,7 @@ def resolve_signal_selection(config, override: str | None = None) -> SignalSelec
                     signal_path=selected_path,
                     transaction_cost_bps=_optional_float(selection.iloc[0].get("transaction_cost_bps")),
                     rebalance_interval_days=_optional_int(selection.iloc[0].get("rebalance_interval_days")),
+                    weighting_method=_optional_str(selection.iloc[0].get("weighting_method")),
                 )
 
     return SignalSelection(signal_path=config.alpha.signals_path)
@@ -131,6 +135,13 @@ def _optional_int(value) -> int | None:
     if pd.isna(value):
         return None
     return int(value)
+
+
+def _optional_str(value) -> str | None:
+    if pd.isna(value):
+        return None
+    text = str(value)
+    return text if text else None
 
 
 if __name__ == "__main__":
