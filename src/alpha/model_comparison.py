@@ -355,6 +355,7 @@ class AlphaModelComparator:
             target_regime=regime,
             factors=factors,
             sequence_length=self.alpha_config.sequence_length,
+            target_horizon=self.alpha_config.target_horizon,
             min_samples=self.alpha_config.min_samples_per_regime,
             augment_noise_std=self.alpha_config.augment_noise_std,
         )
@@ -375,6 +376,7 @@ class AlphaModelComparator:
                 target_regime=regime,
                 factors=factors,
                 sequence_length=self.alpha_config.sequence_length,
+                target_horizon=self.alpha_config.target_horizon,
                 min_samples=self.alpha_config.min_samples_per_regime,
                 augment_noise_std=self.alpha_config.augment_noise_std,
                 allowed_dates=train_dates,
@@ -386,6 +388,7 @@ class AlphaModelComparator:
                 target_regime=regime,
                 factors=factors,
                 sequence_length=self.alpha_config.sequence_length,
+                target_horizon=self.alpha_config.target_horizon,
                 min_samples=0,
                 augment_noise_std=self.alpha_config.augment_noise_std,
                 allowed_dates=test_dates,
