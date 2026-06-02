@@ -5,3 +5,17 @@
 __pycache__/
 *.py[cod]
 data/raw/
+
+# AMRF Generated Data and Models
+data/processed/
+data/regimes/
+data/results/
+models/
+
+# Frontend dependencies and builds
+node_modules/
+dist/
+src/dashboard/frontend/node_modules/
+src/dashboard/frontend/dist/
+package-lock.json
+src/dashboard/frontend/package-lock.json
