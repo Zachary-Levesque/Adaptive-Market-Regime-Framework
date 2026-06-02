@@ -43,6 +43,13 @@ class FeatureEngineer:
             rolling_mean = series.rolling(20).mean()
             rolling_std = series.rolling(20).std()
             features[(ticker, "bollinger_zscore")] = (series - rolling_mean) / rolling_std
+            
+            # Add Fractionally Differentiated Prices (d=0.4 is common for stationarity with memory)
+            try:
+                fd_price = self._frac_diff_ffd(series.to_frame(), d=0.4).iloc[:, 0]
+                features[(ticker, "frac_diff_price")] = fd_price.reindex(series.index)
+            except Exception:
+                pass
 
         technical = pd.DataFrame(features, index=close.index)
         technical.columns = pd.MultiIndex.from_tuples(technical.columns, names=["ticker", "feature"])
@@ -55,6 +62,11 @@ class FeatureEngineer:
             vix_series = vix_series.reindex(close.index)
             technical[("MARKET", "vix_level")] = vix_series
             technical[("MARKET", "vix_5d_change")] = vix_series.pct_change(5)
+            try:
+                fd_vix = self._frac_diff_ffd(vix_series.to_frame(), d=0.4).iloc[:, 0]
+                technical[("MARKET", "frac_diff_vix")] = fd_vix.reindex(vix_series.index)
+            except Exception:
+                pass
 
         return technical.sort_index(axis=1)
 
@@ -151,6 +163,21 @@ class FeatureEngineer:
             high_yield_proxy=high_yield_proxy,
             investment_grade_proxy=investment_grade_proxy,
         )
+        
+        # Enhanced Macro Features
+        if macro is not None:
+            # Inflation (CPI) - monthly but reindexed
+            if "CPI" in macro.columns:
+                regime_features["inflation_yoy"] = macro["CPI"].pct_change(12).reindex(close.index).ffill()
+            # Unemployment
+            if "UNRATE" in macro.columns:
+                regime_features["unemployment_rate"] = macro["UNRATE"].reindex(close.index).ffill()
+            # Fed Funds Rate
+            if "FEDFUNDS" in macro.columns:
+                regime_features["fed_funds_rate"] = macro["FEDFUNDS"].reindex(close.index).ffill()
+            # M2 Money Stock
+            if "M2" in macro.columns:
+                regime_features["m2_growth_yoy"] = macro["M2"].pct_change(52).reindex(close.index).ffill()
 
         return regime_features.dropna(how="all")
 
@@ -216,3 +243,41 @@ class FeatureEngineer:
 
         ratio = close[high_yield_proxy] / close[investment_grade_proxy]
         return np.log(ratio)
+
+    @staticmethod
+    def _frac_diff_ffd(series: pd.DataFrame, d: float, threshold: float = 1e-4) -> pd.DataFrame:
+        """Fixed-window fractional differentiation (FFD) to preserve memory while achieving stationarity."""
+        def get_weights(d, size):
+            w = [1.0]
+            for k in range(1, size):
+                w.append(-w[-1] * (d - k + 1) / k)
+            return np.array(w[::-1]).reshape(-1, 1)
+
+        # Determine window size based on threshold
+        w_all = [1.0]
+        k = 1
+        while True:
+            w_next = -w_all[-1] * (d - k + 1) / k
+            if abs(w_next) < threshold:
+                break
+            w_all.append(w_next)
+            k += 1
+        
+        width = len(w_all) - 1
+        weights = get_weights(d, len(w_all))
+        
+        df = {}
+        for name in series.columns:
+            series_f = series[name].ffill().dropna()
+            if len(series_f) <= width:
+                df[name] = pd.Series(np.nan, index=series.index)
+                continue
+                
+            res = np.zeros(len(series_f))
+            for i in range(width, len(series_f)):
+                res[i] = np.dot(weights.T, series_f.iloc[i-width:i+1].values)[0]
+                
+            out = pd.Series(res, index=series_f.index)
+            df[name] = out.iloc[width:]
+            
+        return pd.DataFrame(df)
