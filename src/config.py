@@ -19,7 +19,7 @@ class DataConfig:
     processed_dir: Path
     local_data_dir: Path
     allow_remote_downloads: bool
-    stooq_api_key: str | None
+    stooq_api_key: str | None = None
 
 
 @dataclass(frozen=True)
