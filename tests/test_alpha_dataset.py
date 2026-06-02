@@ -92,3 +92,26 @@ def test_regime_dataset_skips_missing_regime_labels():
 
     assert len(dataset) > 0
     assert dataset.sample_dates.min() > nullable_labels.index[:5].max()
+
+
+def test_regime_dataset_uses_multi_day_forward_return_target():
+    features, returns, factors, regime_labels = _alpha_inputs()
+    dataset = RegimeDataset(
+        features=features,
+        returns=returns,
+        regime_labels=regime_labels,
+        target_regime=0,
+        factors=factors,
+        sequence_length=10,
+        target_horizon=3,
+        min_samples=0,
+        augment_noise_std=0.0,
+    )
+
+    first_date = dataset.sample_dates[0]
+    first_ticker = dataset.sample_tickers[0]
+    expected = returns[first_ticker].shift(-1).loc[first_date]
+    expected += returns[first_ticker].shift(-2).loc[first_date]
+    expected += returns[first_ticker].shift(-3).loc[first_date]
+
+    assert np.isclose(float(dataset.targets[0]), expected)
