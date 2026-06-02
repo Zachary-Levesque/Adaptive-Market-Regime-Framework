@@ -73,6 +73,9 @@ class RiskConfig:
     long_fraction: float
     short_fraction: float
     rebalance_interval_days: int
+    weighting_method: str
+    volatility_lookback: int
+    volatility_floor: float
 
 
 @dataclass(frozen=True)
@@ -185,6 +188,9 @@ def load_config(path: str | Path) -> AppConfig:
             long_fraction=float(risk_section.get("long_fraction", 0.2)),
             short_fraction=float(risk_section.get("short_fraction", 0.2)),
             rebalance_interval_days=max(1, int(risk_section.get("rebalance_interval_days", 1))),
+            weighting_method=str(risk_section.get("weighting_method", "equal")),
+            volatility_lookback=max(1, int(risk_section.get("volatility_lookback", 21))),
+            volatility_floor=max(1e-12, float(risk_section.get("volatility_floor", 0.005))),
         ),
     )
 
