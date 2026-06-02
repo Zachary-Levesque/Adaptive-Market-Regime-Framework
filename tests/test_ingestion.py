@@ -113,6 +113,35 @@ def test_fetch_stooq_csv_skips_api_key_challenge(monkeypatch):
     assert frame.empty
 
 
+def test_fetch_stooq_csv_includes_configured_api_key(monkeypatch):
+    captured = {}
+    ingester = MarketDataIngester(stooq_api_key="test-key")
+
+    csv_body = "\n".join(
+        [
+            "Date,Open,High,Low,Close,Volume",
+            "2024-01-02,100,101,99,100.5,1000",
+        ]
+    )
+
+    class DummyResponse:
+        text = csv_body
+
+        def raise_for_status(self):
+            return None
+
+    def fake_get(*args, **kwargs):
+        captured.update(kwargs.get("params", {}))
+        return DummyResponse()
+
+    monkeypatch.setattr(ingestion_module.requests, "get", fake_get)
+
+    frame = ingester._fetch_stooq_csv("SPY.US", "2024-01-01", "2024-01-31")
+
+    assert captured["apikey"] == "test-key"
+    assert not frame.empty
+
+
 def test_load_local_price_frames_finds_stooq_style_txt(tmp_path: Path):
     raw_dir = tmp_path / "raw" / "stooq" / "us" / "nasdaq stocks" / "1"
     raw_dir.mkdir(parents=True)
