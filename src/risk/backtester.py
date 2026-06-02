@@ -29,6 +29,9 @@ class BacktestConfig:
     benchmark: str = "SPY"
     momentum_lookback: int = 63
     rebalance_interval_days: int = 1
+    weighting_method: str = "equal"
+    volatility_lookback: int = 21
+    volatility_floor: float = 0.005
 
 
 @dataclass
@@ -64,7 +67,7 @@ class AMRFBacktester:
         stress_periods: Mapping[str, tuple[str, str] | list[str]] | None = None,
     ) -> BacktestArtifacts:
         returns, signals = self._aligned_inputs(start=start, end=end)
-        raw_weights = self.construct_signal_weights(signals)
+        raw_weights = self.construct_signal_weights(signals, returns=returns)
         target_weights = self.apply_rebalance_schedule(raw_weights)
         applied_weights = target_weights.shift(1).reindex(returns.index).fillna(0.0)
         pnl_returns = returns.fillna(0.0)
@@ -129,9 +132,10 @@ class AMRFBacktester:
             weights=applied_weights,
         )
 
-    def construct_signal_weights(self, signals: pd.DataFrame) -> pd.DataFrame:
+    def construct_signal_weights(self, signals: pd.DataFrame, returns: pd.DataFrame | None = None) -> pd.DataFrame:
         """Convert cross-sectional alpha forecasts into daily long/short weights."""
         weights = pd.DataFrame(0.0, index=signals.index, columns=signals.columns)
+        volatility = self._rolling_volatility(returns, signals.index, signals.columns) if returns is not None else None
 
         for date, row in signals.iterrows():
             clean = pd.to_numeric(row, errors="coerce").dropna()
@@ -152,9 +156,19 @@ class AMRFBacktester:
 
             gross_side = self.config.max_gross_exposure / 2.0
             if long_names:
-                weights.loc[date, long_names] = gross_side / len(long_names)
+                weights.loc[date, long_names] = self._side_weights(
+                    names=long_names,
+                    date=date,
+                    gross_side=gross_side,
+                    volatility=volatility,
+                )
             if short_names:
-                weights.loc[date, short_names] = -gross_side / len(short_names)
+                weights.loc[date, short_names] = -self._side_weights(
+                    names=short_names,
+                    date=date,
+                    gross_side=gross_side,
+                    volatility=volatility,
+                )
 
         return weights
 
@@ -259,7 +273,7 @@ class AMRFBacktester:
             np.prod,
             raw=True,
         ) - 1.0
-        momentum_weights = self.construct_signal_weights(momentum_scores)
+        momentum_weights = self.construct_signal_weights(momentum_scores, returns=raw_asset_returns)
         momentum_weights = self.apply_rebalance_schedule(momentum_weights)
         applied_weights = momentum_weights.shift(1).reindex(pnl_asset_returns.index).fillna(0.0)
         gross_returns = (applied_weights * pnl_asset_returns).sum(axis=1)
@@ -275,6 +289,43 @@ class AMRFBacktester:
         normalized.index = pd.to_datetime(normalized.index).tz_localize(None)
         normalized = normalized.apply(pd.to_numeric, errors="coerce")
         return normalized.replace([np.inf, -np.inf], np.nan).sort_index()
+
+    def _side_weights(
+        self,
+        names: list[str],
+        date: pd.Timestamp,
+        gross_side: float,
+        volatility: pd.DataFrame | None,
+    ) -> pd.Series:
+        if self.config.weighting_method != "inverse_volatility" or volatility is None:
+            return pd.Series(gross_side / len(names), index=names, dtype=float)
+
+        if date not in volatility.index:
+            return pd.Series(gross_side / len(names), index=names, dtype=float)
+
+        vols = volatility.loc[date, names].astype(float).replace([np.inf, -np.inf], np.nan)
+        inverse = 1.0 / vols.clip(lower=self.config.volatility_floor)
+        inverse = inverse.replace([np.inf, -np.inf], np.nan).dropna()
+        if inverse.empty or float(inverse.sum()) <= 0.0:
+            return pd.Series(gross_side / len(names), index=names, dtype=float)
+
+        side = pd.Series(0.0, index=names, dtype=float)
+        side.loc[inverse.index] = gross_side * inverse / float(inverse.sum())
+        missing = side.index[side.eq(0.0)]
+        if len(missing) and float(side.sum()) < gross_side:
+            side.loc[missing] = (gross_side - float(side.sum())) / len(missing)
+        return side
+
+    def _rolling_volatility(
+        self,
+        returns: pd.DataFrame,
+        index: pd.Index,
+        columns: pd.Index,
+    ) -> pd.DataFrame:
+        lookback = max(1, int(self.config.volatility_lookback))
+        min_periods = min(lookback, max(2, lookback // 3))
+        volatility = returns.reindex(columns=columns).rolling(lookback, min_periods=min_periods).std(ddof=0)
+        return volatility.reindex(index)
 
     @staticmethod
     def _normalize_regime_labels(regime_labels: pd.DataFrame | pd.Series) -> pd.Series:
