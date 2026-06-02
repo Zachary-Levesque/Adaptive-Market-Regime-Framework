@@ -42,12 +42,14 @@ class RegimeDataset(Dataset):
         target_regime: int,
         factors: pd.DataFrame | None = None,
         sequence_length: int = 60,
+        target_horizon: int = 1,
         min_samples: int = 200,
         augment_noise_std: float = 0.01,
         allowed_dates: Iterable[pd.Timestamp] | None = None,
     ) -> None:
         self.target_regime = target_regime
         self.sequence_length = sequence_length
+        self.target_horizon = max(1, int(target_horizon))
         self.min_samples = min_samples
         self.augment_noise_std = augment_noise_std
         self.allowed_dates = None if allowed_dates is None else {pd.Timestamp(date) for date in allowed_dates}
@@ -65,6 +67,7 @@ class RegimeDataset(Dataset):
             factors=factors,
             target_regime=target_regime,
             sequence_length=sequence_length,
+            target_horizon=self.target_horizon,
             allowed_dates=self.allowed_dates,
         )
 
@@ -128,6 +131,7 @@ class RegimeDataset(Dataset):
         factors: pd.DataFrame | None,
         target_regime: int,
         sequence_length: int,
+        target_horizon: int,
         allowed_dates: set[pd.Timestamp] | None,
     ) -> tuple[np.ndarray, np.ndarray, list[pd.Timestamp], list[str], list[str]]:
         if not isinstance(features.columns, pd.MultiIndex):
@@ -148,8 +152,9 @@ class RegimeDataset(Dataset):
 
         common_dates = feature_frame.index.intersection(normalized_returns.index).intersection(regime_labels.index)
         common_dates = common_dates.sort_values()
+        target_horizon = max(1, int(target_horizon))
 
-        if len(common_dates) <= sequence_length:
+        if len(common_dates) <= sequence_length + target_horizon - 1:
             return np.empty((0, sequence_length, 0)), np.empty((0,)), [], [], []
 
         market_block = (
@@ -179,15 +184,15 @@ class RegimeDataset(Dataset):
 
         feature_names = feature_names or []
         regime_on_dates = regime_labels.reindex(common_dates)
+        forward_returns = RegimeDataset._forward_returns(normalized_returns.reindex(common_dates), target_horizon)
 
         samples_x: list[np.ndarray] = []
         samples_y: list[float] = []
         sample_dates: list[pd.Timestamp] = []
         sample_tickers: list[str] = []
 
-        for end_pos in range(sequence_length - 1, len(common_dates) - 1):
+        for end_pos in range(sequence_length - 1, len(common_dates) - target_horizon):
             current_date = common_dates[end_pos]
-            next_date = common_dates[end_pos + 1]
 
             current_regime = regime_on_dates.loc[current_date]
             if pd.isna(current_regime) or int(current_regime) != target_regime:
@@ -197,7 +202,7 @@ class RegimeDataset(Dataset):
 
             start_pos = end_pos - sequence_length + 1
             for ticker in tickers:
-                target_return = normalized_returns.at[next_date, ticker] if ticker in normalized_returns.columns else np.nan
+                target_return = forward_returns.at[current_date, ticker] if ticker in forward_returns.columns else np.nan
                 if pd.isna(target_return):
                     continue
 
@@ -216,3 +221,12 @@ class RegimeDataset(Dataset):
             sample_tickers,
             feature_names,
         )
+
+    @staticmethod
+    def _forward_returns(returns: pd.DataFrame, horizon: int) -> pd.DataFrame:
+        horizon = max(1, int(horizon))
+        forward = pd.DataFrame(0.0, index=returns.index, columns=returns.columns)
+        for offset in range(1, horizon + 1):
+            forward = forward.add(returns.shift(-offset), fill_value=0.0)
+        valid_counts = sum(returns.shift(-offset).notna().astype(int) for offset in range(1, horizon + 1))
+        return forward.where(valid_counts == horizon)
