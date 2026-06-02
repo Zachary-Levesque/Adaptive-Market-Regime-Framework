@@ -50,6 +50,9 @@ def main() -> None:
         long_fraction=config.risk.long_fraction,
         short_fraction=config.risk.short_fraction,
         rebalance_interval_days=config.risk.rebalance_interval_days,
+        weighting_method=config.risk.weighting_method,
+        volatility_lookback=config.risk.volatility_lookback,
+        volatility_floor=config.risk.volatility_floor,
     )
     artifacts = comparator.build(
         technical_features=technical_features,
