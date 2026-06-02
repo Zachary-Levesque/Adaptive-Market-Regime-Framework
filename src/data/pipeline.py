@@ -37,6 +37,10 @@ class DataPipeline:
         "DGS10": "DGS10",
         "DGS2": "DGS2",
         "VIXCLS": "VIXCLS",
+        "CPI": "CPIAUCSL",
+        "UNRATE": "UNRATE",
+        "FEDFUNDS": "FEDFUNDS",
+        "M2": "M2SL",
     }
 
     def __init__(
