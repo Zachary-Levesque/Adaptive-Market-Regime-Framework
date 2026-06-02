@@ -230,6 +230,8 @@ class AlphaModelComparator:
                     row["projected_backtest_sharpe"] = float(selected["projected_backtest_sharpe"])
                     row["projected_total_return"] = float(selected["projected_total_return"])
                     row["projected_mean_turnover"] = float(selected["projected_mean_turnover"])
+                    row["projected_is_tradable"] = 1.0
+                    row["projected_selection_eligible"] = 1.0
                 return pd.DataFrame([row])
 
         if leaderboard.empty:
