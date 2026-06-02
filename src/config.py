@@ -45,6 +45,7 @@ class AlphaConfig:
     train_window: int
     test_window: int
     step_size: int
+    target_horizon: int
     model_dir: Path
     signals_path: Path
     metrics_path: Path
@@ -141,6 +142,7 @@ def load_config(path: str | Path) -> AppConfig:
             train_window=int(walk_forward_section.get("train_window", 756)),
             test_window=int(walk_forward_section.get("test_window", 126)),
             step_size=int(walk_forward_section.get("step_size", 63)),
+            target_horizon=max(1, int(alpha_section.get("target_horizon", 1))),
             model_dir=Path(alpha_section.get("model_dir", "src/alpha/models")),
             signals_path=Path(alpha_section.get("signals_path", "data/processed/alpha_signals.parquet")),
             metrics_path=Path(alpha_section.get("metrics_path", "data/processed/alpha_metrics.parquet")),
