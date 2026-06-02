@@ -19,6 +19,7 @@ class DataConfig:
     processed_dir: Path
     local_data_dir: Path
     allow_remote_downloads: bool
+    stooq_api_key: str | None
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,7 @@ def load_config(path: str | Path) -> AppConfig:
     processed_dir = Path(data_section.get("processed_dir", "data/processed"))
     local_data_dir = Path(data_section.get("local_data_dir", "data/raw"))
     allow_remote_downloads = bool(data_section.get("allow_remote_downloads", False))
+    stooq_api_key = data_section.get("stooq_api_key")
     regime_section = raw.get("regime", {})
     alpha_section = raw.get("alpha", {})
     risk_section = raw.get("risk", {})
@@ -120,6 +122,7 @@ def load_config(path: str | Path) -> AppConfig:
             processed_dir=processed_dir,
             local_data_dir=local_data_dir,
             allow_remote_downloads=allow_remote_downloads,
+            stooq_api_key=str(stooq_api_key) if stooq_api_key else None,
         ),
         regime=RegimeConfig(
             n_regimes=int(regime_section.get("n_regimes", 4)),
