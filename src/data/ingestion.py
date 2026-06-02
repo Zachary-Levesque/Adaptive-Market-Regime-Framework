@@ -512,6 +512,13 @@ class MarketDataIngester:
         body = response.text.strip()
         if not body or body.lower() == "no data":
             return pd.DataFrame()
+        if "get your apikey" in body.lower() or "get_apikey" in body.lower():
+            logger.warning("Stooq CSV download for {} requires an API key; skipping provider fallback.", symbol)
+            return pd.DataFrame()
+        if not body.lower().startswith("date,"):
+            preview = body.splitlines()[0][:120] if body.splitlines() else ""
+            logger.warning("Unexpected Stooq response for {}: {}", symbol, preview)
+            return pd.DataFrame()
 
         frame = pd.read_csv(StringIO(body))
         if frame.empty:
