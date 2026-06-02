@@ -1040,52 +1040,62 @@ class AlphaModelComparator:
         returns: pd.DataFrame,
         transaction_cost_bps_values: tuple[float, ...] = (0.0, 5.0, 10.0, 25.0),
         rebalance_interval_values: tuple[int, ...] = (1, 5, 10, 21),
+        weighting_methods: tuple[str, ...] = ("equal", "inverse_volatility"),
     ) -> pd.DataFrame:
         rows: list[dict[str, float | int | str]] = []
         for model_name, signals in signal_frames.items():
             active_signal_days = int(signals.notna().any(axis=1).sum())
-            prepared = self._prepare_signal_projection(signals, returns)
-            if prepared is None:
+            prepared_by_method = {
+                method: self._prepare_signal_projection(signals, returns, weighting_method=method)
+                for method in weighting_methods
+            }
+            if all(prepared is None for prepared in prepared_by_method.values()):
                 for cost_bps in transaction_cost_bps_values:
                     for interval in rebalance_interval_values:
+                        for method in weighting_methods:
+                            rows.append(
+                                {
+                                    "model": model_name,
+                                    "transaction_cost_bps": float(cost_bps),
+                                    "rebalance_interval_days": int(interval),
+                                    "weighting_method": method,
+                                    "active_signal_days": active_signal_days,
+                                    "projected_backtest_sharpe": 0.0,
+                                    "projected_total_return": 0.0,
+                                    "projected_mean_turnover": 0.0,
+                                }
+                            )
+                continue
+
+            for method, prepared in prepared_by_method.items():
+                if prepared is None:
+                    continue
+                aligned_returns, raw_weights = prepared
+                scheduled_by_interval = {
+                    interval: self._apply_rebalance_schedule(
+                        raw_weights,
+                        rebalance_interval_days=interval,
+                    )
+                    for interval in rebalance_interval_values
+                }
+
+                for cost_bps in transaction_cost_bps_values:
+                    for interval, target_weights in scheduled_by_interval.items():
+                        stats = self._project_from_weights(
+                            target_weights,
+                            aligned_returns,
+                            transaction_cost_bps=float(cost_bps),
+                        )
                         rows.append(
                             {
                                 "model": model_name,
                                 "transaction_cost_bps": float(cost_bps),
                                 "rebalance_interval_days": int(interval),
+                                "weighting_method": method,
                                 "active_signal_days": active_signal_days,
-                                "projected_backtest_sharpe": 0.0,
-                                "projected_total_return": 0.0,
-                                "projected_mean_turnover": 0.0,
+                                **stats,
                             }
                         )
-                continue
-
-            aligned_returns, raw_weights = prepared
-            scheduled_by_interval = {
-                interval: self._apply_rebalance_schedule(
-                    raw_weights,
-                    rebalance_interval_days=interval,
-                )
-                for interval in rebalance_interval_values
-            }
-
-            for cost_bps in transaction_cost_bps_values:
-                for interval, target_weights in scheduled_by_interval.items():
-                    stats = self._project_from_weights(
-                        target_weights,
-                        aligned_returns,
-                        transaction_cost_bps=float(cost_bps),
-                    )
-                    rows.append(
-                        {
-                            "model": model_name,
-                            "transaction_cost_bps": float(cost_bps),
-                            "rebalance_interval_days": int(interval),
-                            "active_signal_days": active_signal_days,
-                            **stats,
-                        }
-                    )
 
         if not rows:
             return pd.DataFrame(
@@ -1093,6 +1103,7 @@ class AlphaModelComparator:
                     "model",
                     "transaction_cost_bps",
                     "rebalance_interval_days",
+                    "weighting_method",
                     "active_signal_days",
                     "projected_backtest_sharpe",
                     "projected_total_return",
@@ -1102,7 +1113,7 @@ class AlphaModelComparator:
 
         report = pd.DataFrame(rows)
         return report.sort_values(
-            ["model", "transaction_cost_bps", "rebalance_interval_days"],
+            ["model", "transaction_cost_bps", "rebalance_interval_days", "weighting_method"],
             kind="stable",
         ).reset_index(drop=True)
 
