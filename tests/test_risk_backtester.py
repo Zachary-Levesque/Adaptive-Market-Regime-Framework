@@ -183,3 +183,42 @@ def test_backtester_holds_weights_between_rebalance_dates():
     assert artifacts.weights.loc[index[1], "A"] > 0
     assert artifacts.weights.loc[index[2], "A"] > 0
     assert artifacts.weights.loc[index[4], "A"] < 0
+
+
+def test_backtester_inverse_volatility_weights_reduce_high_vol_exposure():
+    index = pd.date_range("2024-01-01", periods=8, freq="B")
+    returns = pd.DataFrame(
+        {
+            "A": [0.0, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01],
+            "B": [0.0, 0.10, -0.10, 0.10, -0.10, 0.10, -0.10, 0.10],
+            "C": [0.0, -0.01, 0.01, -0.01, 0.01, -0.01, 0.01, -0.01],
+            "D": [0.0, -0.10, 0.10, -0.10, 0.10, -0.10, 0.10, -0.10],
+        },
+        index=index,
+    )
+    signals = pd.DataFrame(
+        {
+            "A": [2.0] * len(index),
+            "B": [1.0] * len(index),
+            "C": [-1.0] * len(index),
+            "D": [-2.0] * len(index),
+        },
+        index=index,
+    )
+    backtester = AMRFBacktester(
+        returns=returns,
+        alpha_signals=signals,
+        config=BacktestConfig(
+            long_fraction=0.5,
+            short_fraction=0.5,
+            transaction_cost_bps=0.0,
+            weighting_method="inverse_volatility",
+            volatility_lookback=3,
+            volatility_floor=0.001,
+        ),
+    )
+
+    weights = backtester.construct_signal_weights(signals, returns=returns)
+
+    assert abs(weights.loc[index[-1], "A"]) > abs(weights.loc[index[-1], "B"])
+    assert abs(weights.loc[index[-1], "C"]) > abs(weights.loc[index[-1], "D"])
