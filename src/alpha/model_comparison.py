@@ -127,8 +127,10 @@ class AlphaModelComparator:
 
         fold_metrics = pd.concat(fold_frames, ignore_index=True) if fold_frames else pd.DataFrame()
         signal_frames = self._with_regime_selector_signal(signal_frames, fold_metrics, regime_series)
+        signal_frames = self._with_defensive_regime_selector_signal(signal_frames, regime_series, returns)
         leaderboard = self._summarize(fold_metrics)
         leaderboard = self._with_regime_selector_candidate(leaderboard, fold_metrics)
+        leaderboard = self._with_defensive_regime_selector_candidate(leaderboard, signal_frames, regime_series, returns)
         leaderboard = self._with_cash_candidate(leaderboard)
         leaderboard = self._attach_signal_stats(leaderboard, signal_frames)
         leaderboard = self._attach_projected_backtest_stats(leaderboard, signal_frames, returns)
@@ -546,6 +548,112 @@ class AlphaModelComparator:
         regime_selector = pd.DataFrame([row], index=pd.Index(["regime_selector"], name="model"))
         combined = regime_selector if leaderboard.empty else pd.concat([leaderboard, regime_selector], sort=False)
         return combined.sort_values(["mean_net_sharpe", "mean_sharpe", "mean_ic"], ascending=False)
+
+    def _with_defensive_regime_selector_signal(
+        self,
+        signal_frames: dict[str, pd.DataFrame],
+        regime_series: pd.Series,
+        returns: pd.DataFrame,
+    ) -> dict[str, pd.DataFrame]:
+        selections = self._select_projected_models_by_regime(signal_frames, regime_series, returns)
+        if not selections:
+            return signal_frames
+
+        template = next(iter(signal_frames.values()))
+        composite = pd.DataFrame(np.nan, index=template.index, columns=template.columns, dtype=float)
+        aligned_regimes = regime_series.reindex(composite.index)
+        for regime, model_name in selections.items():
+            if model_name not in signal_frames:
+                continue
+            mask = aligned_regimes.eq(regime).fillna(False)
+            composite.loc[mask] = signal_frames[model_name].loc[mask]
+
+        enriched = dict(signal_frames)
+        enriched["defensive_regime_selector"] = composite
+        return enriched
+
+    def _with_defensive_regime_selector_candidate(
+        self,
+        leaderboard: pd.DataFrame,
+        signal_frames: dict[str, pd.DataFrame],
+        regime_series: pd.Series,
+        returns: pd.DataFrame,
+    ) -> pd.DataFrame:
+        if "defensive_regime_selector" not in signal_frames:
+            return leaderboard
+
+        selections = self._select_projected_models_by_regime(signal_frames, regime_series, returns)
+        if not selections:
+            return leaderboard
+
+        stats = self._project_signal_backtest(signal_frames["defensive_regime_selector"], returns)
+        row = {
+            "n_rows": 0,
+            "n_folds": 0,
+            "n_regimes": len(selections),
+            "mean_sharpe": stats["projected_backtest_sharpe"],
+            "median_sharpe": stats["projected_backtest_sharpe"],
+            "mean_net_sharpe": stats["projected_backtest_sharpe"],
+            "mean_ic": 0.0,
+            "mean_rank_ic": 0.0,
+            "mean_hit_rate": 0.0,
+            "mean_turnover": stats["projected_mean_turnover"],
+            "mean_transaction_cost": stats["projected_mean_turnover"] * (self.transaction_cost_bps / 10_000.0),
+            "mean_train_size": 0.0,
+            "mean_test_size": 0.0,
+            "selected_regime_models": ", ".join(
+                f"{int(regime)}:{model_name}" for regime, model_name in sorted(selections.items())
+            ),
+        }
+        defensive = pd.DataFrame([row], index=pd.Index(["defensive_regime_selector"], name="model"))
+        combined = defensive if leaderboard.empty else pd.concat([leaderboard, defensive], sort=False)
+        return combined.sort_values(["mean_net_sharpe", "mean_sharpe", "mean_ic"], ascending=False)
+
+    def _select_projected_models_by_regime(
+        self,
+        signal_frames: dict[str, pd.DataFrame],
+        regime_series: pd.Series,
+        returns: pd.DataFrame,
+    ) -> dict[int, str]:
+        base_models = [
+            model_name
+            for model_name in signal_frames
+            if model_name not in {"cash", "regime_selector", "defensive_regime_selector"}
+        ]
+        if not base_models:
+            return {}
+
+        selections: dict[int, str] = {}
+        aligned_regimes = regime_series.reindex(returns.index)
+        for regime in sorted(int(value) for value in aligned_regimes.dropna().unique()):
+            regime_dates = aligned_regimes[aligned_regimes.eq(regime)].index
+            if len(regime_dates) < self.min_regime_selection_folds:
+                continue
+
+            rows = []
+            for model_name in base_models:
+                signals = signal_frames[model_name].reindex(regime_dates)
+                regime_returns = returns.reindex(regime_dates)
+                stats = self._project_signal_backtest(signals, regime_returns)
+                if stats["projected_backtest_sharpe"] <= 0.0 or stats["projected_total_return"] <= 0.0:
+                    continue
+                rows.append(
+                    {
+                        "model": model_name,
+                        "projected_backtest_sharpe": stats["projected_backtest_sharpe"],
+                        "projected_total_return": stats["projected_total_return"],
+                        "projected_mean_turnover": stats["projected_mean_turnover"],
+                    }
+                )
+
+            if rows:
+                ranked = pd.DataFrame(rows).sort_values(
+                    ["projected_backtest_sharpe", "projected_total_return", "projected_mean_turnover"],
+                    ascending=[False, False, True],
+                )
+                selections[regime] = str(ranked.iloc[0]["model"])
+
+        return selections
 
     def _select_models_by_regime(self, fold_metrics: pd.DataFrame) -> dict[int, str]:
         if fold_metrics.empty:
