@@ -273,7 +273,6 @@ class AlphaModelComparator:
             "model",
             "transaction_cost_bps",
             "rebalance_interval_days",
-            "weighting_method",
             "projected_backtest_sharpe",
             "projected_total_return",
         }
