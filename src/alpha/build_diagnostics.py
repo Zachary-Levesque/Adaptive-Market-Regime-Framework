@@ -25,6 +25,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional path to a parquet file containing alpha signals to diagnose.",
     )
+    parser.add_argument(
+        "--forward-return-horizon",
+        type=int,
+        default=None,
+        help="Number of future trading days to sum when scoring forward returns.",
+    )
     return parser.parse_args()
 
 
@@ -36,7 +42,10 @@ def main() -> None:
     returns = pd.read_parquet(config.data.processed_dir / "returns.parquet")
     regime_labels = pd.read_parquet(config.regime.output_dir / "regime_labels.parquet")
 
-    diagnostics = AlphaDiagnostics(min_assets_per_day=args.min_assets_per_day)
+    diagnostics = AlphaDiagnostics(
+        min_assets_per_day=args.min_assets_per_day,
+        forward_return_horizon=args.forward_return_horizon or config.alpha.target_horizon,
+    )
     artifacts = diagnostics.evaluate(
         alpha_signals=alpha_signals,
         returns=returns,
