@@ -47,6 +47,9 @@ class AlphaModelComparator:
         long_fraction: float = 0.2,
         short_fraction: float = 0.2,
         rebalance_interval_days: int = 1,
+        weighting_method: str = "equal",
+        volatility_lookback: int = 21,
+        volatility_floor: float = 0.005,
         min_regime_selection_folds: int = 3,
         min_selection_active_days: int = 504,
     ) -> None:
@@ -58,6 +61,9 @@ class AlphaModelComparator:
         self.long_fraction = long_fraction
         self.short_fraction = short_fraction
         self.rebalance_interval_days = max(1, int(rebalance_interval_days))
+        self.weighting_method = str(weighting_method)
+        self.volatility_lookback = max(1, int(volatility_lookback))
+        self.volatility_floor = max(1e-12, float(volatility_floor))
         self.min_regime_selection_folds = max(1, int(min_regime_selection_folds))
         self.min_selection_active_days = max(1, int(min_selection_active_days))
 
@@ -889,7 +895,7 @@ class AlphaModelComparator:
         first_active = active_rows[active_rows].index[0]
         aligned_signals = aligned_signals.loc[aligned_signals.index >= first_active]
         aligned_returns = aligned_returns.loc[aligned_returns.index >= first_active]
-        raw_weights = self._construct_signal_weight_frame(aligned_signals)
+        raw_weights = self._construct_signal_weight_frame(aligned_signals, returns=aligned_returns)
         return aligned_returns, raw_weights
 
     def _project_from_weights(
@@ -924,11 +930,18 @@ class AlphaModelComparator:
             "projected_mean_turnover": float(turnover.mean()) if len(turnover) else 0.0,
         }
 
-    def _construct_signal_weight_frame(self, signals: pd.DataFrame) -> pd.DataFrame:
+    def _construct_signal_weight_frame(self, signals: pd.DataFrame, returns: pd.DataFrame | None = None) -> pd.DataFrame:
         """Convert a full signal matrix into long/short weights with minimal pandas overhead."""
         values = signals.to_numpy(dtype=float, copy=True)
         weights = np.zeros(values.shape, dtype=float)
         gross_side = self.max_gross_exposure / 2.0
+        volatility_values = None
+        if returns is not None and self.weighting_method == "inverse_volatility":
+            volatility = returns.reindex(index=signals.index, columns=signals.columns).rolling(
+                self.volatility_lookback,
+                min_periods=min(self.volatility_lookback, max(2, self.volatility_lookback // 3)),
+            ).std(ddof=0)
+            volatility_values = volatility.to_numpy(dtype=float, copy=False)
 
         for row_idx in range(values.shape[0]):
             row = values[row_idx]
@@ -945,10 +958,32 @@ class AlphaModelComparator:
             if np.intersect1d(long_idx, short_idx, assume_unique=False).size:
                 continue
 
-            weights[row_idx, long_idx] = gross_side / len(long_idx)
-            weights[row_idx, short_idx] = -gross_side / len(short_idx)
+            weights[row_idx, long_idx] = self._side_weight_values(long_idx, row_idx, gross_side, volatility_values)
+            weights[row_idx, short_idx] = -self._side_weight_values(short_idx, row_idx, gross_side, volatility_values)
 
         return pd.DataFrame(weights, index=signals.index, columns=signals.columns)
+
+    def _side_weight_values(
+        self,
+        asset_indices: np.ndarray,
+        row_idx: int,
+        gross_side: float,
+        volatility_values: np.ndarray | None,
+    ) -> np.ndarray:
+        if self.weighting_method != "inverse_volatility" or volatility_values is None:
+            return np.full(len(asset_indices), gross_side / len(asset_indices), dtype=float)
+
+        vols = volatility_values[row_idx, asset_indices]
+        valid = np.isfinite(vols) & (vols > 0.0)
+        if not valid.any():
+            return np.full(len(asset_indices), gross_side / len(asset_indices), dtype=float)
+
+        inverse = np.zeros(len(asset_indices), dtype=float)
+        inverse[valid] = 1.0 / np.maximum(vols[valid], self.volatility_floor)
+        total = float(inverse.sum())
+        if total <= 0.0:
+            return np.full(len(asset_indices), gross_side / len(asset_indices), dtype=float)
+        return gross_side * inverse / total
 
     def _apply_rebalance_schedule(
         self,
