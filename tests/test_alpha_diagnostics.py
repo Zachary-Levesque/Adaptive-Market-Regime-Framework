@@ -51,6 +51,30 @@ def test_alpha_diagnostics_requires_overlap():
         raise AssertionError("Expected ValueError for missing ticker overlap")
 
 
+def test_alpha_diagnostics_uses_configurable_forward_return_horizon():
+    index = pd.date_range("2024-01-01", periods=5, freq="B")
+    signals = pd.DataFrame(
+        {
+            "A": [1.0, 1.0, 1.0, 1.0, np.nan],
+            "B": [-1.0, -1.0, -1.0, -1.0, np.nan],
+        },
+        index=index,
+    )
+    returns = pd.DataFrame(
+        {
+            "A": [0.0, 0.02, -0.01, 0.03, 0.01],
+            "B": [0.0, -0.01, 0.01, -0.02, -0.01],
+        },
+        index=index,
+    )
+
+    diagnostics = AlphaDiagnostics(min_assets_per_day=2, forward_return_horizon=2)
+    artifacts = diagnostics.evaluate(signals, returns)
+
+    assert artifacts.summary.loc["overall", "n_days"] == 3
+    assert artifacts.summary.loc["overall", "mean_rank_ic"] > 0
+
+
 def test_diagnostics_resolve_signal_path_prefers_selection_manifest(tmp_path):
     selected_path = tmp_path / "signals" / "ensemble.parquet"
     selected_path.parent.mkdir(parents=True, exist_ok=True)
