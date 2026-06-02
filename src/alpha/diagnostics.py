@@ -17,7 +17,7 @@ class AlphaDiagnosticsArtifacts:
 
 
 class AlphaDiagnostics:
-    """Evaluate whether alpha forecasts rank and sign next-day returns."""
+    """Evaluate whether alpha forecasts rank and sign forward returns."""
 
     def __init__(self, min_assets_per_day: int = 3, forward_return_horizon: int = 1) -> None:
         self.min_assets_per_day = min_assets_per_day
