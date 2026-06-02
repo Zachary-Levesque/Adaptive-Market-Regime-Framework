@@ -79,11 +79,23 @@ class RiskConfig:
 
 
 @dataclass(frozen=True)
+class RLConfig:
+    total_timesteps: int
+    learning_rate: float
+    n_steps: int
+    batch_size: int
+    n_epochs: int
+    gamma: float
+    initial_capital: float
+
+
+@dataclass(frozen=True)
 class AppConfig:
     data: DataConfig
     regime: RegimeConfig
     alpha: AlphaConfig
     risk: RiskConfig
+    rl: RLConfig
 
 
 def load_config(path: str | Path) -> AppConfig:
@@ -100,6 +112,7 @@ def load_config(path: str | Path) -> AppConfig:
     regime_section = raw.get("regime", {})
     alpha_section = raw.get("alpha", {})
     risk_section = raw.get("risk", {})
+    rl_section = raw.get("rl", {})
     lstm_section = alpha_section.get("lstm", {})
     walk_forward_section = alpha_section.get("walk_forward", {})
     regime_names = {
@@ -192,7 +205,17 @@ def load_config(path: str | Path) -> AppConfig:
             volatility_lookback=max(1, int(risk_section.get("volatility_lookback", 21))),
             volatility_floor=max(1e-12, float(risk_section.get("volatility_floor", 0.005))),
         ),
+        rl=RLConfig(
+            total_timesteps=int(rl_section.get("total_timesteps", 1000000)),
+            learning_rate=float(rl_section.get("learning_rate", 0.0003)),
+            n_steps=int(rl_section.get("n_steps", 2048)),
+            batch_size=int(rl_section.get("batch_size", 64)),
+            n_epochs=int(rl_section.get("n_epochs", 10)),
+            gamma=float(rl_section.get("gamma", 0.99)),
+            initial_capital=float(rl_section.get("initial_capital", 100000.0)),
+        ),
     )
+
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
