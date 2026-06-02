@@ -546,6 +546,8 @@ def test_selection_manifest_prefers_realistic_positive_sensitivity_row(tmp_path:
     assert selection.loc[0, "selection_method"] == "sensitivity"
     assert selection.loc[0, "transaction_cost_bps"] == 10.0
     assert selection.loc[0, "rebalance_interval_days"] == 5
+    assert selection.loc[0, "projected_is_tradable"] == 1.0
+    assert selection.loc[0, "projected_selection_eligible"] == 1.0
 
 
 def test_selection_manifest_falls_back_to_leaderboard_when_no_tradable_sensitivity(tmp_path: Path):
