@@ -19,6 +19,51 @@ Work through modules in order. Do not skip ahead — each module feeds the next.
 
 ---
 
+## Current Gated Build Plan
+
+The original roadmap below describes the full AMRF end state, including reinforcement learning, intraday execution, and a dashboard. The current implementation follows a stricter research gate:
+
+1. **Module 1 — Data Pipeline**
+2. **Module 2 — Regime Detection Engine**
+3. **Module 3 — Regime-Specific Alpha Models**
+4. **Module 4 — Alpha Selection, Diagnostics, and Readiness**
+5. **Module 5 — Risk Engine & Backtester**
+6. **Planned Module 6 — Reinforcement Learning Position Sizing Agent**
+7. **Planned Module 7 — Intraday Execution Layer**
+8. **Planned Module 8 — Dashboard**
+
+Do not implement or train the RL agent until:
+- `python -m src.alpha.build_readiness` reports `Ready for RL: True`
+- the selected signal has adequate active history
+- overall and regime-level rank IC are positive
+- the backtest Sharpe meets the configured threshold
+- the strategy is defensible against SPY and equal-weight baselines
+- all configured stress periods overlap the data
+
+The current project priority is alpha quality and data coverage, especially GFC-compatible history. RL should be treated as a later position-sizing layer, not a substitute for weak alpha.
+
+### Current Command Order
+
+```bash
+python -m src.data.validate_phase1_inputs --config configs/config.yaml
+python -m src.data.build_phase1 --config configs/config.yaml --allow-remote-downloads
+python -m src.regime.build_phase2 --config configs/config.yaml
+python -m src.alpha.build_model_comparison --config configs/config.yaml --skip-ensemble
+python -m src.risk.build_phase4 --config configs/config.yaml
+python -m src.alpha.build_diagnostics --config configs/config.yaml
+python -m src.alpha.build_readiness --config configs/config.yaml
+```
+
+When local raw files are available, import them first:
+
+```bash
+python -m src.data.import_price_files --config configs/config.yaml --source /path/to/vendor/files
+```
+
+When using Stooq remote CSV downloads, set either `data.stooq_api_key` in `configs/config.yaml` or the `STOOQ_API_KEY` environment variable.
+
+---
+
 ## Environment Setup
 
 ### Prerequisites
@@ -584,10 +629,12 @@ print("Module 3 validation passed!")
 
 ---
 
-## Module 4 — Reinforcement Learning Position Sizing Agent
+## Planned Module 6 — Reinforcement Learning Position Sizing Agent
 
 ### Goal
 Train a PPO reinforcement learning agent to dynamically size portfolio positions. The agent learns optimal risk-taking behavior across all market regimes — being aggressive in bull markets, defensive in crises, and exploiting mean reversion in low-vol periods.
+
+> Gate: do not build this module until the selected alpha signal passes `python -m src.alpha.build_readiness`.
 
 ### Inputs
 - `data/processed/features.parquet`
@@ -754,7 +801,7 @@ print("Module 4 environment validation passed!")
 ## Module 5 — Risk Engine & Backtester
 
 ### Goal
-Build a comprehensive risk engine and backtesting framework. This ties everything together — using regime detection, alpha models, and RL agent to run a full 25-year backtest with proper risk metrics.
+Build a comprehensive risk engine and backtesting framework. In the current gated workflow this uses the selected alpha signal and deterministic position construction first. RL position weights are a planned future input after readiness passes.
 
 ### Inputs
 - All outputs from Modules 1-4
@@ -840,7 +887,7 @@ Input: pandas Series of daily returns, benchmark returns, regime labels."
 
 ---
 
-## Module 6 — Intraday Execution Layer
+## Planned Module 7 — Intraday Execution Layer
 
 ### Goal
 Add intraday timing to the daily signals. Instead of blindly buying at market open, AMRF waits for intraday confirmation before entering. This dramatically improves entry prices and reduces false signals.
@@ -894,7 +941,7 @@ and positions are closed by 3:45 PM."
 
 ---
 
-## Module 7 — Dashboard
+## Planned Module 8 — Dashboard
 
 ### Goal
 Build an interactive dashboard that displays regime state, trade signals, portfolio performance, and risk metrics in real time.
