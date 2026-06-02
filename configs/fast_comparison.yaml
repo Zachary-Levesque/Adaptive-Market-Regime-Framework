@@ -1,0 +1,68 @@
+data:
+  universe:
+    - NVDA
+    - TSM
+    - AMD
+    - CIEN
+    - LITE
+    - AAPL
+    - MSFT
+    - GOOGL
+    - META
+    - AMZN
+    - JPM
+    - GS
+    - SPY
+    - QQQ
+    - TLT
+    - GLD
+    - HYG
+    - LQD
+    - ^VIX
+  start_date: "2018-01-01"
+  end_date: "2024-12-31"
+  benchmark: "SPY"
+  cache_dir: "data/raw"
+  processed_dir: "data/processed"
+  local_data_dir: "data/raw"
+  allow_remote_downloads: true
+  stooq_api_key:
+
+regime:
+  n_regimes: 4
+  n_iter: 1000
+  covariance_type: "full"
+  regime_names:
+    0: "Bull Trending"
+    1: "Low-Vol Compression"
+    2: "Bear Trending"
+    3: "High-Vol Crisis"
+
+alpha:
+  target_horizon: 5
+  diagnostics_path: "data/processed/alpha_diagnostics.parquet"
+  comparison_path: "data/processed/alpha_model_comparison.parquet"
+  signals_dir: "data/processed/alpha_signals"
+  selection_path: "data/processed/alpha_signal_selection.parquet"
+  lstm:
+    hidden_size: 64
+    num_layers: 1
+    dropout: 0.1
+    sequence_length: 60
+    batch_size: 32
+    epochs: 10
+    learning_rate: 0.001
+  walk_forward:
+    train_window: 504
+    test_window: 126
+    step_size: 126
+
+risk:
+  transaction_cost_bps: 10.0
+  max_gross_exposure: 1.0
+  long_fraction: 0.2
+  short_fraction: 0.2
+  rebalance_interval_days: 5
+  weighting_method: "inverse_volatility"
+  volatility_lookback: 21
+  volatility_floor: 0.005
