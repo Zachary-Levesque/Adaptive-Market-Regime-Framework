@@ -75,6 +75,9 @@ risk:
   long_fraction: 0.2
   short_fraction: 0.2
   rebalance_interval_days: 5
+  weighting_method: "inverse_volatility"
+  volatility_lookback: 21
+  volatility_floor: 0.005
   stress_periods:
     gfc: ["2008-09-01", "2009-03-31"]
     covid: ["2020-02-19", "2020-03-23"]
