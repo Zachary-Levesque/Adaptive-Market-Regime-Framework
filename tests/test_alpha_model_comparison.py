@@ -501,6 +501,39 @@ def test_regime_selector_requires_enough_positive_folds(tmp_path: Path):
     assert comparator._select_models_by_regime(fold_metrics) == {}
 
 
+def test_defensive_regime_selector_goes_cash_in_negative_projected_regime(tmp_path: Path):
+    comparator = AlphaModelComparator(
+        alpha_config=_minimal_alpha_config(tmp_path),
+        regime_config=_minimal_regime_config(tmp_path),
+        baseline_specs=[],
+        transaction_cost_bps=0.0,
+        long_fraction=0.5,
+        short_fraction=0.5,
+    )
+    index = pd.date_range("2024-01-01", periods=8, freq="B")
+    regime_series = pd.Series([0, 0, 0, 0, 1, 1, 1, 1], index=index, dtype="Int64")
+    returns = pd.DataFrame(
+        {
+            "A": [0.0, 0.02, 0.02, 0.02, 0.0, -0.02, -0.02, -0.02],
+            "B": [0.0, -0.02, -0.02, -0.02, 0.0, 0.02, 0.02, 0.02],
+        },
+        index=index,
+    )
+    good_regime_0 = pd.DataFrame({"A": [1.0] * 8, "B": [-1.0] * 8}, index=index)
+    bad_regime_1 = pd.DataFrame({"A": [1.0] * 8, "B": [-1.0] * 8}, index=index)
+    signal_frames = {
+        "good_model": good_regime_0,
+        "bad_model": bad_regime_1,
+        "cash": pd.DataFrame(np.nan, index=index, columns=returns.columns),
+    }
+
+    enriched = comparator._with_defensive_regime_selector_signal(signal_frames, regime_series, returns)
+    defensive = enriched["defensive_regime_selector"]
+
+    assert defensive.loc[index[:4]].notna().any(axis=1).any()
+    assert defensive.loc[index[4:]].isna().all(axis=None)
+
+
 def test_selection_manifest_prefers_realistic_positive_sensitivity_row(tmp_path: Path):
     comparator = AlphaModelComparator(
         alpha_config=_minimal_alpha_config(tmp_path),
