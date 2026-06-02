@@ -16,6 +16,10 @@ class ReadinessThresholds:
     min_rank_ic: float = 0.0
     min_ic_positive_rate: float = 0.5
     require_stress_overlap: bool = True
+    require_all_stress_scenarios: bool = True
+    benchmark_names: tuple[str, ...] = ("SPY", "equal_weight")
+    min_benchmark_excess_sharpe: float = 0.0
+    min_benchmark_excess_total_return: float = 0.0
 
 
 class AlphaReadinessChecker:
@@ -77,9 +81,11 @@ class AlphaReadinessChecker:
                 "Selected strategy total return should be positive.",
             ),
         ]
+        rows.extend(self._benchmark_rows(performance_report, strategy))
 
         if stress_report is not None and not stress_report.empty:
-            overlap_days = int(pd.to_numeric(stress_report.get("n_days", pd.Series(dtype=float)), errors="coerce").sum())
+            n_days = pd.to_numeric(stress_report.get("n_days", pd.Series(dtype=float)), errors="coerce").fillna(0)
+            overlap_days = int(n_days.sum())
             rows.append(
                 self._row(
                     "stress_overlap",
@@ -88,6 +94,16 @@ class AlphaReadinessChecker:
                     "At least one configured stress window should overlap the selected backtest.",
                 )
             )
+            if self.thresholds.require_all_stress_scenarios:
+                missing = stress_report.index[n_days.eq(0)].astype(str).tolist()
+                rows.append(
+                    self._row(
+                        "stress_all_scenarios",
+                        len(missing) == 0,
+                        ", ".join(missing),
+                        "Every configured stress window should overlap the selected backtest.",
+                    )
+                )
 
         report = pd.DataFrame(rows)
         report["ready_for_rl"] = bool(report["passed"].all()) if not report.empty else False
@@ -106,3 +122,36 @@ class AlphaReadinessChecker:
             "value": str(value),
             "detail": detail,
         }
+
+    def _benchmark_rows(self, performance_report: pd.DataFrame, strategy: pd.Series) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        strategy_sharpe = float(strategy.get("sharpe", 0.0))
+        strategy_total_return = float(strategy.get("total_return", 0.0))
+
+        for benchmark_name in self.thresholds.benchmark_names:
+            if benchmark_name not in performance_report.index:
+                continue
+
+            benchmark = performance_report.loc[benchmark_name]
+            excess_sharpe = strategy_sharpe - float(benchmark.get("sharpe", 0.0))
+            excess_total_return = strategy_total_return - float(benchmark.get("total_return", 0.0))
+            rows.append(
+                self._row(
+                    f"benchmark_sharpe_{benchmark_name}",
+                    excess_sharpe >= self.thresholds.min_benchmark_excess_sharpe,
+                    excess_sharpe,
+                    f"Selected strategy Sharpe should beat {benchmark_name} by at least "
+                    f"{self.thresholds.min_benchmark_excess_sharpe}.",
+                )
+            )
+            rows.append(
+                self._row(
+                    f"benchmark_total_return_{benchmark_name}",
+                    excess_total_return >= self.thresholds.min_benchmark_excess_total_return,
+                    excess_total_return,
+                    f"Selected strategy total return should beat {benchmark_name} by at least "
+                    f"{self.thresholds.min_benchmark_excess_total_return}.",
+                )
+            )
+
+        return rows
