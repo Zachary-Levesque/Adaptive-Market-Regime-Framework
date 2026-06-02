@@ -52,5 +52,36 @@ def test_alpha_readiness_fails_on_short_history_negative_ic_and_missing_stress()
     report = checker.evaluate(selection, diagnostics, performance, stress)
 
     failed = set(report.loc[~report["passed"], "check"])
-    assert {"active_history", "rank_ic", "ic_positive_rate", "stress_overlap"}.issubset(failed)
+    assert {"active_history", "rank_ic", "ic_positive_rate", "stress_overlap", "stress_all_scenarios"}.issubset(failed)
+    assert not report["ready_for_rl"].any()
+
+
+def test_alpha_readiness_fails_when_strategy_lags_benchmarks():
+    checker = AlphaReadinessChecker(ReadinessThresholds(min_active_days=2, min_sharpe=0.1))
+    selection = pd.DataFrame([{"model": "regime_selector"}])
+    diagnostics = pd.DataFrame(
+        [
+            {
+                "n_days": 10,
+                "mean_rank_ic": 0.02,
+                "ic_positive_rate": 0.6,
+            }
+        ],
+        index=["overall"],
+    )
+    performance = pd.DataFrame(
+        [
+            {"sharpe": 0.2, "total_return": 0.05},
+            {"sharpe": 1.0, "total_return": 0.50},
+            {"sharpe": 0.7, "total_return": 0.30},
+        ],
+        index=["strategy", "SPY", "equal_weight"],
+    )
+    stress = pd.DataFrame([{"n_days": 5}], index=["sample"])
+
+    report = checker.evaluate(selection, diagnostics, performance, stress)
+
+    failed = set(report.loc[~report["passed"], "check"])
+    assert "benchmark_sharpe_SPY" in failed
+    assert "benchmark_total_return_equal_weight" in failed
     assert not report["ready_for_rl"].any()
