@@ -51,6 +51,7 @@ def test_alpha_pipeline_build_persists_signals_and_models(tmp_path: Path):
         train_window=60,
         test_window=20,
         step_size=20,
+        target_horizon=1,
         model_dir=tmp_path / "models",
         signals_path=tmp_path / "processed" / "alpha_signals.parquet",
         metrics_path=tmp_path / "processed" / "alpha_metrics.parquet",
