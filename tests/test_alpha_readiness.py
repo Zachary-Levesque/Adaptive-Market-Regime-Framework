@@ -85,3 +85,43 @@ def test_alpha_readiness_fails_when_strategy_lags_benchmarks():
     assert "benchmark_sharpe_SPY" in failed
     assert "benchmark_total_return_equal_weight" in failed
     assert not report["ready_for_rl"].any()
+
+
+def test_alpha_readiness_fails_when_any_regime_has_negative_rank_ic():
+    checker = AlphaReadinessChecker(
+        ReadinessThresholds(
+            min_active_days=2,
+            min_sharpe=0.1,
+            benchmark_names=(),
+            require_all_stress_scenarios=False,
+        )
+    )
+    selection = pd.DataFrame([{"model": "regime_selector"}])
+    diagnostics = pd.DataFrame(
+        [{"n_days": 10, "mean_rank_ic": 0.02, "ic_positive_rate": 0.6}],
+        index=["overall"],
+    )
+    performance = pd.DataFrame(
+        [{"sharpe": 0.2, "total_return": 0.05}],
+        index=["strategy"],
+    )
+    regime_diagnostics = pd.DataFrame(
+        [
+            {"mean_rank_ic": 0.03},
+            {"mean_rank_ic": -0.02},
+        ],
+        index=[0, 3],
+    )
+
+    report = checker.evaluate(
+        selection=selection,
+        diagnostics_summary=diagnostics,
+        performance_report=performance,
+        stress_report=pd.DataFrame([{"n_days": 5}], index=["sample"]),
+        regime_diagnostics=regime_diagnostics,
+    )
+
+    failed = set(report.loc[~report["passed"], "check"])
+    assert "regime_rank_ic_3" in failed
+    assert "regime_rank_ic_0" not in failed
+    assert not report["ready_for_rl"].any()
