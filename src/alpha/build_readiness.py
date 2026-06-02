@@ -33,6 +33,12 @@ def main() -> None:
     config = load_config(args.config)
     selection = pd.read_parquet(config.alpha.selection_path)
     diagnostics_summary = pd.read_parquet(config.alpha.diagnostics_path.with_name("alpha_diagnostics_summary.parquet"))
+    regime_diagnostics_path = config.alpha.diagnostics_path.with_name("alpha_diagnostics_by_regime.parquet")
+    regime_diagnostics = (
+        pd.read_parquet(regime_diagnostics_path)
+        if regime_diagnostics_path.exists()
+        else pd.DataFrame()
+    )
     performance_report = pd.read_parquet(config.risk.output_dir / "performance_report.parquet")
     stress_path = config.risk.output_dir / "stress_report.parquet"
     stress_report = pd.read_parquet(stress_path) if stress_path.exists() else pd.DataFrame()
@@ -48,6 +54,7 @@ def main() -> None:
         diagnostics_summary=diagnostics_summary,
         performance_report=performance_report,
         stress_report=stress_report,
+        regime_diagnostics=regime_diagnostics,
     )
     output_path = config.alpha.diagnostics_path.with_name("alpha_readiness_report.parquet")
     checker.save(report, output_path)
