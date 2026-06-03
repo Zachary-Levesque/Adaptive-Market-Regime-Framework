@@ -139,6 +139,29 @@ def test_alpha_model_comparison_builds_leaderboard_and_saves_artifacts(tmp_path:
     assert artifacts.best_model in artifacts.signal_paths
 
 
+def test_alpha_model_comparison_dry_run_does_not_save_artifacts(tmp_path: Path):
+    features, returns, factors, regime_labels = _comparison_inputs()
+    comparator = AlphaModelComparator(
+        alpha_config=_minimal_alpha_config(tmp_path),
+        regime_config=_minimal_regime_config(tmp_path),
+        baseline_specs=[],
+    )
+
+    artifacts = comparator.build(
+        technical_features=features,
+        returns=returns,
+        factors=factors,
+        regime_labels=regime_labels,
+        include_ensemble=False,
+        save_outputs=False,
+    )
+
+    assert artifacts.best_model == "cash"
+    assert artifacts.signal_paths == {}
+    assert not (tmp_path / "processed" / "alpha_model_comparison.parquet").exists()
+    assert not (tmp_path / "processed" / "alpha_signal_selection.parquet").exists()
+
+
 def test_optional_tree_baselines_accept_model_factory_input_size():
     specs = build_default_baseline_specs(include_tree_models=True)
     tree_specs = [spec for spec in specs if spec.name in {"random_forest", "gradient_boosting"}]
