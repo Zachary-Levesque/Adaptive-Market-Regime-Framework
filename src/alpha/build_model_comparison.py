@@ -30,6 +30,18 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Include random forest and gradient boosting baselines in addition to the linear models.",
     )
+    parser.add_argument(
+        "--baseline",
+        action="append",
+        default=None,
+        help="Baseline model name to include. Can be passed multiple times.",
+    )
+    parser.add_argument(
+        "--baseline-limit",
+        type=int,
+        default=None,
+        help="Optional maximum number of baseline specs to run after name filtering.",
+    )
     return parser.parse_args()
 
 
@@ -41,10 +53,22 @@ def main() -> None:
     factors = pd.read_parquet(config.data.processed_dir / "factors.parquet")
     regime_labels = pd.read_parquet(config.regime.output_dir / "regime_labels.parquet")
 
+    baseline_specs = build_default_baseline_specs(include_tree_models=args.include_tree_baselines)
+    if args.baseline:
+        requested = set(args.baseline)
+        baseline_specs = [spec for spec in baseline_specs if spec.name in requested]
+        missing = sorted(requested.difference({spec.name for spec in baseline_specs}))
+        if missing:
+            raise ValueError(f"Unknown baseline model(s): {', '.join(missing)}")
+    if args.baseline_limit is not None:
+        if args.baseline_limit < 1:
+            raise ValueError("--baseline-limit must be at least 1.")
+        baseline_specs = baseline_specs[: args.baseline_limit]
+
     comparator = AlphaModelComparator(
         config.alpha,
         config.regime,
-        baseline_specs=build_default_baseline_specs(include_tree_models=args.include_tree_baselines),
+        baseline_specs=baseline_specs,
         transaction_cost_bps=config.risk.transaction_cost_bps,
         max_gross_exposure=config.risk.max_gross_exposure,
         long_fraction=config.risk.long_fraction,
