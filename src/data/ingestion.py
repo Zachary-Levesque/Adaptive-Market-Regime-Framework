@@ -324,10 +324,60 @@ class MarketDataIngester:
         interval: str,
     ) -> pd.DataFrame | None:
         cache_path = self._cache_path(tickers, start, end, interval)
-        if cache_path is None or not cache_path.exists():
+        if cache_path is None:
             return None
 
-        return pd.read_parquet(cache_path)
+        if cache_path.exists():
+            return pd.read_parquet(cache_path)
+
+        if self.cache_dir is None or not self.cache_dir.exists():
+            return None
+
+        candidates = sorted(
+            self.cache_dir.glob(f"*_{interval}.parquet"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        for candidate in candidates:
+            cached = self._filter_cached_prices(pd.read_parquet(candidate), tickers, start, end)
+            if cached is not None:
+                logger.info("Using overlapping cached price history from {}", candidate)
+                return cached
+
+        return None
+
+    def _filter_cached_prices(
+        self,
+        prices: pd.DataFrame,
+        tickers: list[str],
+        start: str,
+        end: str,
+    ) -> pd.DataFrame | None:
+        if prices.empty or not isinstance(prices.columns, pd.MultiIndex):
+            return None
+
+        available = set(prices.columns.get_level_values(0).astype(str))
+        if any(ticker not in available for ticker in tickers):
+            return None
+
+        filtered = prices.loc[:, prices.columns.get_level_values(0).isin(tickers)].copy()
+        filtered.index = pd.to_datetime(filtered.index).tz_localize(None)
+        filtered = filtered.sort_index().loc[
+            (filtered.index >= pd.Timestamp(start)) & (filtered.index <= pd.Timestamp(end))
+        ]
+        if filtered.empty:
+            return None
+
+        first_cached = filtered.index.min()
+        if first_cached > pd.Timestamp(start):
+            logger.warning(
+                "Cached price history starts at {}, after requested start {}. "
+                "Continuing with partial coverage; data quality gates will flag the gap.",
+                first_cached.date(),
+                pd.Timestamp(start).date(),
+            )
+
+        return filtered.sort_index(axis=1)
 
     def _load_local_price_frames(
         self,
