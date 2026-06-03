@@ -90,6 +90,7 @@ def main() -> None:
             weighting_method=weighting_method,
             volatility_lookback=config.risk.volatility_lookback,
             volatility_floor=config.risk.volatility_floor,
+            max_position_weight=config.risk.max_position_weight,
         ),
     )
     artifacts = backtester.run(start=args.start, end=args.end, stress_periods=config.risk.stress_periods)
