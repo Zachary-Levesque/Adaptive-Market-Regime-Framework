@@ -1,6 +1,11 @@
 import pandas as pd
 
-from src.alpha.readiness import AlphaReadinessChecker, ReadinessThresholds
+from src.alpha.readiness import (
+    AlphaReadinessChecker,
+    ReadinessThresholds,
+    load_readiness_status,
+    readiness_report_passes,
+)
 
 
 def test_alpha_readiness_passes_when_all_thresholds_are_met(tmp_path):
@@ -125,3 +130,19 @@ def test_alpha_readiness_fails_when_any_regime_has_negative_rank_ic():
     assert "regime_rank_ic_3" in failed
     assert "regime_rank_ic_0" not in failed
     assert not report["ready_for_rl"].any()
+
+
+def test_readiness_status_loader_fails_closed_for_missing_or_invalid_report(tmp_path):
+    missing_status, missing_report = load_readiness_status(tmp_path / "missing.parquet")
+    invalid = pd.DataFrame([{"check": "selected_model", "passed": True}])
+    invalid_path = tmp_path / "invalid.parquet"
+    invalid.to_parquet(invalid_path)
+
+    invalid_status, invalid_report = load_readiness_status(invalid_path)
+
+    assert missing_status is False
+    assert missing_report.empty
+    assert invalid_status is False
+    assert invalid_report.equals(invalid)
+    assert readiness_report_passes(pd.DataFrame([{"ready_for_rl": True}])) is True
+    assert readiness_report_passes(pd.DataFrame([{"ready_for_rl": True}, {"ready_for_rl": False}])) is False
