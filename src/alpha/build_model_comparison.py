@@ -42,6 +42,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional maximum number of baseline specs to run after name filtering.",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Run the comparison and print results without saving artifacts or selection manifests.",
+    )
     return parser.parse_args()
 
 
@@ -86,6 +91,7 @@ def main() -> None:
         regime_labels=regime_labels,
         epochs_override=args.epochs_override,
         include_ensemble=not args.skip_ensemble,
+        save_outputs=not args.dry_run,
     )
 
     print(artifacts.leaderboard.round(4).to_string())
