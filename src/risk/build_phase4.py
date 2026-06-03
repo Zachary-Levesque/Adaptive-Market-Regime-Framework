@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.alpha.readiness import load_readiness_status
 from src.config import load_config
 from src.risk.backtester import AMRFBacktester, BacktestConfig
 
@@ -115,6 +116,13 @@ def resolve_signal_selection(config, override: str | None = None) -> SignalSelec
         if not selection.empty and "signal_path" in selection.columns:
             selected_path = Path(str(selection.iloc[0]["signal_path"]))
             if selected_path.exists():
+                if _is_rl_tilted_signal(selected_path):
+                    ready, _ = load_readiness_status(
+                        config.alpha.diagnostics_path.with_name("alpha_readiness_report.parquet")
+                    )
+                    if not ready:
+                        fallback_path = _resolve_non_rl_fallback_signal(config)
+                        return SignalSelection(signal_path=fallback_path)
                 return SignalSelection(
                     signal_path=selected_path,
                     transaction_cost_bps=_optional_float(selection.iloc[0].get("transaction_cost_bps")),
@@ -123,6 +131,30 @@ def resolve_signal_selection(config, override: str | None = None) -> SignalSelec
                 )
 
     return SignalSelection(signal_path=config.alpha.signals_path)
+
+
+def _is_rl_tilted_signal(path: Path) -> bool:
+    return path.name == "alpha_signals_rl_tilted.parquet"
+
+
+def _resolve_non_rl_fallback_signal(config) -> Path:
+    summary_path = config.alpha.comparison_path.with_name("alpha_model_comparison_summary.parquet")
+    if summary_path.exists():
+        summary = pd.read_parquet(summary_path)
+        if "signal_path" in summary.columns:
+            candidates = summary.copy()
+            if "model" not in candidates.columns:
+                candidates = candidates.reset_index()
+            if "model" in candidates.columns:
+                candidates = candidates[candidates["model"].astype(str).ne("rl_tilted")]
+            candidates["signal_path"] = candidates["signal_path"].astype(str)
+            candidates = candidates[~candidates["signal_path"].str.endswith("alpha_signals_rl_tilted.parquet")]
+            for signal_path in candidates["signal_path"]:
+                path = Path(signal_path)
+                if path.exists():
+                    return path
+
+    return config.alpha.signals_path
 
 
 def _optional_float(value) -> float | None:
