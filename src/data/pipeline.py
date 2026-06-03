@@ -28,6 +28,7 @@ class PipelineArtifacts:
     technical_features: pd.DataFrame
     regime_features: pd.DataFrame
     macro: pd.DataFrame
+    data_quality: pd.DataFrame
 
 
 class DataPipeline:
@@ -95,6 +96,12 @@ class DataPipeline:
             macro=macro,
             benchmark=self.config.benchmark,
         )
+        data_quality = self._build_data_quality_report(
+            prices=prices,
+            returns=returns,
+            factors=factors,
+            macro=macro,
+        )
 
         artifacts = PipelineArtifacts(
             prices=prices,
@@ -103,6 +110,7 @@ class DataPipeline:
             technical_features=technical_features,
             regime_features=regime_features,
             macro=macro,
+            data_quality=data_quality,
         )
         self._persist(artifacts)
         return artifacts
@@ -118,7 +126,86 @@ class DataPipeline:
             (artifacts.technical_features, output_dir / "technical_features.parquet"),
             (artifacts.regime_features, output_dir / "regime_features.parquet"),
             (artifacts.macro, output_dir / "macro.parquet"),
+            (artifacts.data_quality, output_dir / "data_quality_report.parquet"),
         ]
 
         for frame, path in outputs:
             self.ingester.save(frame, path)
+
+    def _build_data_quality_report(
+        self,
+        prices: pd.DataFrame,
+        returns: pd.DataFrame,
+        factors: pd.DataFrame,
+        macro: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """Summarize coverage and missingness for downstream readiness checks."""
+        if not isinstance(prices.columns, pd.MultiIndex):
+            raise TypeError("Expected price data with (ticker, field) MultiIndex columns.")
+
+        price_field = "Adj Close" if "Adj Close" in prices.columns.get_level_values(1) else "Close"
+        close = prices.xs(price_field, axis=1, level=1).sort_index()
+        normalized_returns = returns.copy()
+        normalized_returns.index = pd.to_datetime(normalized_returns.index).tz_localize(None)
+        gfc_start = pd.Timestamp("2008-09-01")
+        gfc_end = pd.Timestamp("2009-03-31")
+
+        rows: list[dict[str, object]] = []
+        for ticker in close.columns:
+            close_series = pd.to_numeric(close[ticker], errors="coerce")
+            valid_close = close_series.dropna()
+            return_series = (
+                pd.to_numeric(normalized_returns[ticker], errors="coerce")
+                if ticker in normalized_returns.columns
+                else pd.Series(dtype=float)
+            )
+            first_date = valid_close.index.min() if not valid_close.empty else pd.NaT
+            last_date = valid_close.index.max() if not valid_close.empty else pd.NaT
+            gfc_window = close_series.loc[(close_series.index >= gfc_start) & (close_series.index <= gfc_end)]
+            rows.append(
+                {
+                    "dataset": "prices",
+                    "symbol": str(ticker),
+                    "first_valid_date": "" if pd.isna(first_date) else str(pd.Timestamp(first_date).date()),
+                    "last_valid_date": "" if pd.isna(last_date) else str(pd.Timestamp(last_date).date()),
+                    "n_observations": int(close_series.notna().sum()),
+                    "missing_fraction": float(close_series.isna().mean()) if len(close_series) else 1.0,
+                    "return_observations": int(return_series.notna().sum()),
+                    "return_missing_fraction": float(return_series.isna().mean()) if len(return_series) else 1.0,
+                    "covers_gfc": bool(gfc_window.notna().any()),
+                }
+            )
+
+        rows.extend(self._frame_quality_rows("factors", factors))
+        rows.extend(self._frame_quality_rows("macro", macro))
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def _frame_quality_rows(dataset: str, frame: pd.DataFrame) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        normalized = frame.copy()
+        normalized.index = pd.to_datetime(normalized.index).tz_localize(None)
+        for column in normalized.columns:
+            series = pd.to_numeric(normalized[column], errors="coerce")
+            valid = series.dropna()
+            first_date = valid.index.min() if not valid.empty else pd.NaT
+            last_date = valid.index.max() if not valid.empty else pd.NaT
+            rows.append(
+                {
+                    "dataset": dataset,
+                    "symbol": str(column),
+                    "first_valid_date": "" if pd.isna(first_date) else str(pd.Timestamp(first_date).date()),
+                    "last_valid_date": "" if pd.isna(last_date) else str(pd.Timestamp(last_date).date()),
+                    "n_observations": int(series.notna().sum()),
+                    "missing_fraction": float(series.isna().mean()) if len(series) else 1.0,
+                    "return_observations": 0,
+                    "return_missing_fraction": 1.0,
+                    "covers_gfc": bool(
+                        series.loc[
+                            (series.index >= pd.Timestamp("2008-09-01"))
+                            & (series.index <= pd.Timestamp("2009-03-31"))
+                        ].notna().any()
+                    ),
+                }
+            )
+        return rows
