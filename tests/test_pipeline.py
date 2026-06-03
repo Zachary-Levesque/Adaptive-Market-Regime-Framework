@@ -41,6 +41,17 @@ class StubFactorLoader:
         return self._macro
 
 
+class FailingDownloadFactorLoader:
+    def download_ff5(self, start=None, end=None):
+        raise RuntimeError("factor provider unavailable")
+
+    def align_with_returns(self, factors, returns):
+        return factors.reindex(returns.index).ffill()
+
+    def download_macro_series(self, series_map, start, end):
+        raise RuntimeError("macro provider unavailable")
+
+
 class StubFeatureEngineer:
     def compute_technical_features(self, prices, vix=None):
         return pd.DataFrame(
@@ -105,3 +116,41 @@ def test_pipeline_build_persists_all_expected_outputs(tmp_path: Path):
     assert (tmp_path / "processed" / "prices.parquet") in ingester.saved_paths
     assert (tmp_path / "processed" / "regime_features.parquet") in ingester.saved_paths
     assert (tmp_path / "processed" / "data_quality_report.parquet") in ingester.saved_paths
+
+
+def test_pipeline_uses_existing_processed_factor_and_macro_artifacts_when_refresh_fails(tmp_path: Path):
+    index = pd.date_range("2024-01-01", periods=3, freq="B")
+    columns = pd.MultiIndex.from_product(
+        [["SPY"], ["Open", "High", "Low", "Close", "Adj Close", "Volume"]],
+        names=["ticker", "field"],
+    )
+    prices = pd.DataFrame(1.0, index=index, columns=columns)
+    returns = pd.DataFrame({"SPY": [0.01, 0.02, 0.03]}, index=index)
+    cached_factors = pd.DataFrame({"Mkt-RF": [0.1, 0.2, 0.3]}, index=index)
+    cached_macro = pd.DataFrame({"DGS10": [4.0, 4.1, 4.2], "DGS2": [3.5, 3.6, 3.7]}, index=index)
+    processed_dir = tmp_path / "processed"
+    processed_dir.mkdir()
+    cached_factors.to_parquet(processed_dir / "factors.parquet")
+    cached_macro.to_parquet(processed_dir / "macro.parquet")
+
+    config = DataConfig(
+        universe=["SPY"],
+        start_date="2024-01-01",
+        end_date="2024-01-31",
+        benchmark="SPY",
+        cache_dir=tmp_path / "raw",
+        processed_dir=processed_dir,
+        local_data_dir=tmp_path / "raw",
+        allow_remote_downloads=False,
+    )
+    pipeline = DataPipeline(
+        config=config,
+        ingester=StubIngester(prices=prices, returns=returns),
+        factor_loader=FailingDownloadFactorLoader(),
+        feature_engineer=StubFeatureEngineer(),
+    )
+
+    artifacts = pipeline.build()
+
+    assert artifacts.factors.equals(cached_factors)
+    assert artifacts.macro.equals(cached_macro)
