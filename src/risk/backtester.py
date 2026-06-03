@@ -32,6 +32,7 @@ class BacktestConfig:
     weighting_method: str = "equal"
     volatility_lookback: int = 21
     volatility_floor: float = 0.005
+    max_position_weight: float = 1.0
 
 
 @dataclass
@@ -298,23 +299,41 @@ class AMRFBacktester:
         volatility: pd.DataFrame | None,
     ) -> pd.Series:
         if self.config.weighting_method != "inverse_volatility" or volatility is None:
-            return pd.Series(gross_side / len(names), index=names, dtype=float)
+            return self._cap_side_weights(pd.Series(gross_side / len(names), index=names, dtype=float), gross_side)
 
         if date not in volatility.index:
-            return pd.Series(gross_side / len(names), index=names, dtype=float)
+            return self._cap_side_weights(pd.Series(gross_side / len(names), index=names, dtype=float), gross_side)
 
         vols = volatility.loc[date, names].astype(float).replace([np.inf, -np.inf], np.nan)
         inverse = 1.0 / vols.clip(lower=self.config.volatility_floor)
         inverse = inverse.replace([np.inf, -np.inf], np.nan).dropna()
         if inverse.empty or float(inverse.sum()) <= 0.0:
-            return pd.Series(gross_side / len(names), index=names, dtype=float)
+            return self._cap_side_weights(pd.Series(gross_side / len(names), index=names, dtype=float), gross_side)
 
         side = pd.Series(0.0, index=names, dtype=float)
         side.loc[inverse.index] = gross_side * inverse / float(inverse.sum())
         missing = side.index[side.eq(0.0)]
         if len(missing) and float(side.sum()) < gross_side:
             side.loc[missing] = (gross_side - float(side.sum())) / len(missing)
-        return side
+        return self._cap_side_weights(side, gross_side)
+
+    def _cap_side_weights(self, weights: pd.Series, gross_side: float) -> pd.Series:
+        cap = float(self.config.max_position_weight)
+        if cap <= 0.0 or cap >= gross_side or weights.empty:
+            return weights
+
+        capped = weights.clip(upper=cap)
+        available = capped[capped < cap].index
+        leftover = gross_side - float(capped.sum())
+        while leftover > 1e-12 and len(available):
+            increment = leftover / len(available)
+            capped.loc[available] = (capped.loc[available] + increment).clip(upper=cap)
+            new_leftover = gross_side - float(capped.sum())
+            if abs(new_leftover - leftover) < 1e-12:
+                break
+            leftover = new_leftover
+            available = capped[capped < cap].index
+        return capped
 
     def _rolling_volatility(
         self,
