@@ -97,8 +97,11 @@ def test_pipeline_build_persists_all_expected_outputs(tmp_path: Path):
     assert artifacts.prices.equals(prices)
     assert artifacts.returns.equals(returns)
     assert artifacts.technical_features.iloc[0, 0] == 10.0
+    assert "covers_gfc" in artifacts.data_quality.columns
+    assert artifacts.data_quality.loc[artifacts.data_quality["symbol"].eq("SPY"), "covers_gfc"].iloc[0] == False
     assert ingester.download_calls == [["SPY"]]
     assert factor_loader.ff5_calls == [("2024-01-01", "2024-01-31")]
-    assert len(ingester.saved_paths) == 6
+    assert len(ingester.saved_paths) == 7
     assert (tmp_path / "processed" / "prices.parquet") in ingester.saved_paths
     assert (tmp_path / "processed" / "regime_features.parquet") in ingester.saved_paths
+    assert (tmp_path / "processed" / "data_quality_report.parquet") in ingester.saved_paths
