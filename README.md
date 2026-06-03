@@ -109,7 +109,7 @@ Target daily output once the planned live layer exists:
 | Kalman Filter | Signal Processing | State estimation & noise reduction |
 | LSTM (PyTorch) | Alpha Generation | Regime-specific return forecasting |
 | Transformer (PyTorch) | Alpha Generation | Attention-based factor modeling |
-| PPO (Stable-Baselines3) | Planned RL Agent | Future dynamic position sizing |
+| PPO (Stable-Baselines3) | RL Position Sizing | Dynamic weight tilting agent |
 | Fama-French 5-Factor | Alpha Generation | Systematic risk factor exposure |
 | Monte Carlo Simulation | Risk Engine | VaR & CVaR estimation |
 | Markowitz MVO | Portfolio Construction | Efficient frontier optimization |
@@ -125,12 +125,12 @@ Target daily output once the planned live layer exists:
 | stable-baselines3 | Reinforcement learning |
 | pandas / numpy | Data manipulation |
 | yfinance | Historical market data |
-| alpaca-trade-api | Planned intraday data & live trading |
+| alpaca-trade-api | Intraday data & execution |
 | pandas-datareader | Fama-French factor data |
 | scipy | Statistical functions |
 | matplotlib / plotly | Visualization |
-| FastAPI | Planned dashboard backend |
-| React | Planned dashboard frontend |
+| FastAPI | Dashboard backend |
+| React | Dashboard frontend |
 | Docker | Containerization |
  
 ---
@@ -138,7 +138,7 @@ Target daily output once the planned live layer exists:
 ## Modules
  
 ### Module 1 — Data Pipeline
-Ingests and normalizes historical price, volume, and factor data. Computes returns, volatility features, and Fama-French factor exposures across a configurable stock universe.
+Ingests and normalizes historical price, volume, and factor data. Computes returns, volatility features, and Fama-French factor exposures across a configurable stock universe. Enhanced with **Fractional Differentiation** and Macro-economic features.
  
 ### Module 2 — Regime Detection Engine
 Fits a Hidden Markov Model with Gaussian emissions to identify 4 latent market regimes. Validated and cross-checked with a Gaussian Mixture Model. Bayesian smoothing applied to regime transition probabilities. Kalman filter used for state estimation.
@@ -152,14 +152,14 @@ Compares alpha candidates against baselines, writes a selected signal manifest, 
 ### Module 5 — Risk Engine & Backtester
 Full backtesting engine with Monte Carlo VaR/CVaR, historical stress testing (2008, COVID-19, 2022), and performance attribution. Reports Sharpe, Sortino, Calmar, max drawdown, win rate, and regime-conditional performance.
  
-### Planned Module 6 — Reinforcement Learning Position Sizing Agent
-A PPO position-sizing agent is planned, but should only be built after the selected alpha signal passes the readiness gate.
+### Module 6 — Reinforcement Learning Position Sizing Agent
+A PPO-based agent trained in a custom Gymnasium environment. The agent learns to dynamically "tilt" alpha signals (up to +/- 50%) based on current regime probabilities and risk-adjusted return targets.
 
-### Planned Module 7 — Intraday Execution Layer
-Uses 5-minute bar data from Alpaca API for intraday entry/exit timing. VWAP deviation signals, order flow imbalance detection, and intraday momentum confirmation before executing daily signals.
+### Module 7 — Intraday Execution Layer
+Uses 5-minute bar data from Alpaca API for intraday entry timing. VWAP deviation signals, volume spikes, and momentum confirmation filters are applied to daily signals to improve execution quality and reduce slippage.
  
-### Planned Module 8 — Dashboard
-Interactive React dashboard showing live regime state, current signals, portfolio performance, risk metrics, and regime history visualization. FastAPI backend serves all model outputs via REST API.
+### Module 8 — Interactive Dashboard
+Full-stack dashboard with a FastAPI backend and React/Tailwind frontend. Provides real-time visualization of regime states, equity curves, readiness checklists, and risk diagnostics.
  
 ---
  
