@@ -134,6 +134,55 @@ def test_alpha_readiness_fails_when_any_regime_has_negative_rank_ic():
     assert not report["ready_for_rl"].any()
 
 
+def test_alpha_readiness_fails_when_price_data_lacks_gfc_coverage():
+    checker = AlphaReadinessChecker(
+        ReadinessThresholds(
+            min_active_days=2,
+            min_sharpe=0.1,
+            benchmark_names=(),
+            require_all_stress_scenarios=False,
+        )
+    )
+    selection = pd.DataFrame([{"model": "regime_selector"}])
+    diagnostics = pd.DataFrame(
+        [{"n_days": 10, "mean_rank_ic": 0.02, "ic_positive_rate": 0.6}],
+        index=["overall"],
+    )
+    performance = pd.DataFrame(
+        [{"sharpe": 0.2, "total_return": 0.05}],
+        index=["strategy"],
+    )
+    data_quality = pd.DataFrame(
+        [
+            {
+                "dataset": "prices",
+                "symbol": "SPY",
+                "first_valid_date": "2012-01-03",
+                "covers_gfc": False,
+            },
+            {
+                "dataset": "prices",
+                "symbol": "QQQ",
+                "first_valid_date": "2012-01-03",
+                "covers_gfc": False,
+            },
+        ]
+    )
+
+    report = checker.evaluate(
+        selection=selection,
+        diagnostics_summary=diagnostics,
+        performance_report=performance,
+        stress_report=pd.DataFrame([{"n_days": 5}], index=["sample"]),
+        data_quality_report=data_quality,
+    )
+
+    failed = set(report.loc[~report["passed"], "check"])
+    assert "data_price_gfc_coverage" in failed
+    assert "data_price_history_start" in failed
+    assert not report["ready_for_rl"].any()
+
+
 def test_readiness_status_loader_fails_closed_for_missing_or_invalid_report(tmp_path):
     missing_status, missing_report = load_readiness_status(tmp_path / "missing.parquet")
     invalid = pd.DataFrame([{"check": "selected_model", "passed": True}])
