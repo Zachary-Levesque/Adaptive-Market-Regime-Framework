@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.alpha.readiness import load_readiness_status
 from src.alpha.diagnostics import AlphaDiagnostics
 from src.config import load_config
 
@@ -70,8 +71,33 @@ def resolve_signal_path(config, override: str | None = None) -> Path:
         if not selection.empty and "signal_path" in selection.columns:
             selected_path = Path(str(selection.iloc[0]["signal_path"]))
             if selected_path.exists():
+                if selected_path.name == "alpha_signals_rl_tilted.parquet":
+                    ready, _ = load_readiness_status(
+                        config.alpha.diagnostics_path.with_name("alpha_readiness_report.parquet")
+                    )
+                    if not ready:
+                        return resolve_non_rl_signal_path(config)
                 return selected_path
 
+    return config.alpha.signals_path
+
+
+def resolve_non_rl_signal_path(config) -> Path:
+    summary_path = config.alpha.comparison_path.with_name("alpha_model_comparison_summary.parquet")
+    if summary_path.exists():
+        summary = pd.read_parquet(summary_path)
+        if "signal_path" in summary.columns:
+            candidates = summary.copy()
+            if "model" not in candidates.columns:
+                candidates = candidates.reset_index()
+            if "model" in candidates.columns:
+                candidates = candidates[candidates["model"].astype(str).ne("rl_tilted")]
+            candidates["signal_path"] = candidates["signal_path"].astype(str)
+            candidates = candidates[~candidates["signal_path"].str.endswith("alpha_signals_rl_tilted.parquet")]
+            for signal_path in candidates["signal_path"]:
+                path = Path(signal_path)
+                if path.exists():
+                    return path
     return config.alpha.signals_path
 
 
