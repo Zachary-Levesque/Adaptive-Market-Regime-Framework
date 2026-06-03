@@ -612,6 +612,39 @@ def test_selection_manifest_falls_back_to_leaderboard_when_no_tradable_sensitivi
     assert selection.loc[0, "selection_method"] == "leaderboard"
 
 
+def test_selection_manifest_leaderboard_fallback_uses_selection_eligible_row(tmp_path: Path):
+    comparator = AlphaModelComparator(
+        alpha_config=_minimal_alpha_config(tmp_path),
+        regime_config=_minimal_regime_config(tmp_path),
+        baseline_specs=[],
+    )
+    leaderboard = pd.DataFrame(
+        [
+            {
+                "model": "high_fold_score_but_not_tradable",
+                "projected_backtest_sharpe": -0.2,
+                "projected_total_return": -0.1,
+                "projected_selection_eligible": 0.0,
+            },
+            {
+                "model": "cash",
+                "projected_backtest_sharpe": 0.0,
+                "projected_total_return": 0.0,
+                "projected_selection_eligible": 1.0,
+            },
+        ]
+    ).set_index("model")
+    signal_paths = {
+        "high_fold_score_but_not_tradable": tmp_path / "weak.parquet",
+        "cash": tmp_path / "cash.parquet",
+    }
+
+    selection = comparator._build_selection_manifest(leaderboard, signal_paths)
+
+    assert selection.loc[0, "model"] == "cash"
+    assert selection.loc[0, "selection_method"] == "leaderboard"
+
+
 def test_selection_manifest_ignores_short_history_sensitivity_candidate(tmp_path: Path):
     comparator = AlphaModelComparator(
         alpha_config=_minimal_alpha_config(tmp_path),
