@@ -257,7 +257,7 @@ class AlphaModelComparator:
                 ]
             )
 
-        top_model = str(leaderboard.index[0])
+        top_model = self._select_from_leaderboard(leaderboard)
         row = {
             "model": top_model,
             "signal_path": str(signal_paths.get(top_model, "")),
@@ -269,6 +269,19 @@ class AlphaModelComparator:
         row["signal_path"] = str(signal_paths.get(top_model, row["signal_path"]))
         row["selection_method"] = "leaderboard"
         return pd.DataFrame([row])
+
+    def _select_from_leaderboard(self, leaderboard: pd.DataFrame) -> str:
+        if leaderboard.empty:
+            return ""
+        if "projected_selection_eligible" not in leaderboard.columns:
+            return str(leaderboard.index[0])
+
+        eligible = leaderboard[
+            pd.to_numeric(leaderboard["projected_selection_eligible"], errors="coerce").fillna(0.0).gt(0.0)
+        ]
+        if eligible.empty:
+            return str(leaderboard.index[0])
+        return str(eligible.index[0])
 
     def _select_from_sensitivity(self, sensitivity_report: pd.DataFrame) -> pd.Series | None:
         required = {
