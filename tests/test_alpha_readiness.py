@@ -1,5 +1,7 @@
 import pandas as pd
+from types import SimpleNamespace
 
+from src.alpha.build_readiness import resolve_effective_selection
 from src.alpha.readiness import (
     AlphaReadinessChecker,
     ReadinessThresholds,
@@ -146,3 +148,28 @@ def test_readiness_status_loader_fails_closed_for_missing_or_invalid_report(tmp_
     assert invalid_report.equals(invalid)
     assert readiness_report_passes(pd.DataFrame([{"ready_for_rl": True}])) is True
     assert readiness_report_passes(pd.DataFrame([{"ready_for_rl": True}, {"ready_for_rl": False}])) is False
+
+
+def test_readiness_effective_selection_falls_back_from_rl_tilted_signal(tmp_path):
+    fallback_path = tmp_path / "signals" / "defensive_regime_selector.parquet"
+    fallback_path.parent.mkdir(parents=True, exist_ok=True)
+    fallback_path.write_bytes(b"")
+    comparison_path = tmp_path / "alpha_model_comparison.parquet"
+    pd.DataFrame(
+        [{"model": "defensive_regime_selector", "signal_path": str(fallback_path)}]
+    ).to_parquet(tmp_path / "alpha_model_comparison_summary.parquet")
+    config = SimpleNamespace(
+        alpha=SimpleNamespace(
+            comparison_path=comparison_path,
+            signals_path=tmp_path / "fallback.parquet",
+        )
+    )
+    selection = pd.DataFrame(
+        [{"model": "rl_tilted", "signal_path": str(tmp_path / "alpha_signals_rl_tilted.parquet")}]
+    )
+
+    effective = resolve_effective_selection(config, selection)
+
+    assert effective.loc[0, "model"] == "defensive_regime_selector"
+    assert effective.loc[0, "signal_path"] == str(fallback_path)
+    assert effective.loc[0, "selection_method"] == "pre_rl_fallback"
