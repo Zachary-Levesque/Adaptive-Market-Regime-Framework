@@ -112,12 +112,13 @@ async def get_today_signals():
 @app.get("/api/portfolio/performance")
 async def get_performance():
     results = load_parquet_safe(RESULTS_DIR / "backtest_results.parquet")
-    # Assuming columns: 'date', 'portfolio_value', 'benchmark_value', 'drawdown'
-    # We might need to process the backtest_results.parquet which usually has returns
-    
     df = results.reset_index()
     if 'date' not in df.columns and 'index' in df.columns:
         df = df.rename(columns={'index': 'date'})
+    if "portfolio_value" not in df.columns and "equity" in df.columns:
+        df["portfolio_value"] = df["equity"]
+    if "benchmark_value" not in df.columns and "benchmark_equity" in df.columns:
+        df["benchmark_value"] = df["benchmark_equity"]
         
     # Simplify for the chart (return last 500 days)
     chart_data = df.tail(500).to_dict(orient="records")
