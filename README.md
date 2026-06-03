@@ -25,13 +25,13 @@ Implemented and tested:
 5. **Backtests** the selected signal against SPY, equal-weight, and momentum baselines
 6. **Reports** alpha diagnostics, regime-conditional results, stress tests, and pre-RL readiness checks
 
-Planned but not implemented:
+Implemented but gated:
 
 1. PPO reinforcement-learning position sizing
 2. Intraday execution through Alpaca
 3. FastAPI/React dashboard and live daily recommendation workflow
 
-The project should not move to RL until `python -m src.alpha.build_readiness` passes. The current local artifacts show a positive but weak alpha signal that underperforms simple benchmarks.
+These layers are intentionally blocked by the research gate. The project should not move to RL, execution, or live recommendations until `python -m src.alpha.build_readiness` and `python -m src.build_completion_report` pass. The current local artifacts show a positive but weak alpha signal that underperforms simple benchmarks and does not have GFC-era stress coverage.
 
 Target daily output once the planned live layer exists:
  
@@ -169,13 +169,22 @@ Current local artifact snapshot from `data/results/performance_report.parquet`:
 
 | Metric | AMRF Strategy | Buy & Hold SPY | Equal Weight | 63D Momentum |
 |---|---|---|---|---|
-| Annual Return | 2.28% | 19.81% | 19.22% | -3.44% |
-| Sharpe Ratio | 0.25 | 1.32 | 1.10 | -0.19 |
-| Max Drawdown | -25.18% | -20.49% | -37.16% | -37.87% |
-| Calmar Ratio | 0.09 | 0.97 | 0.52 | -0.09 |
-| Win Rate | 51.00% | 54.62% | 56.88% | 49.60% |
+| Annual Return | 0.52% | 18.49% | 17.80% | 0.44% |
+| Sharpe Ratio | 0.10 | 1.25 | 1.05 | 0.10 |
+| Max Drawdown | -17.44% | -20.49% | -37.16% | -15.19% |
+| Calmar Ratio | 0.03 | 0.90 | 0.48 | 0.03 |
+| Win Rate | 51.27% | 54.22% | 56.65% | 50.20% |
  
-Alpha diagnostics currently score the selected signal against a 5-trading-day forward-return target. The latest selected signal is `defensive_regime_selector`: mean IC 0.0193, mean rank IC 0.0243, IC positive on 51.06% of scored days. The signal is active in regimes 1, 2, and 3, with positive rank IC in each active regime, but realized Sharpe and benchmark-relative performance remain below the readiness gate. This means the next project step should improve data coverage and risk-adjusted portfolio construction before adding reinforcement learning position sizing.
+Alpha diagnostics currently score the selected signal against a 5-trading-day forward-return target. The latest selected non-RL signal is `regime_selector`: mean IC 0.0317, mean rank IC 0.0327, and IC positive on 53.49% of scored days. Regime-level rank IC is positive in all four regimes, but realized Sharpe, benchmark-relative performance, and GFC stress coverage remain below the final completion gate.
+
+Current completion status from `data/results/project_completion_report.parquet`: **not complete**. The blocking checks are:
+
+- selected-strategy Sharpe below 0.5
+- selected strategy underperforms SPY and equal-weight benchmarks
+- configured price history starts after the 2008 GFC stress window
+- GFC stress scenario has no overlap with the selected backtest
+
+This means the next research step is not RL. The next step is to supply true 2007-2009 data coverage or revise the universe/proxy policy explicitly, then improve alpha/portfolio construction until the selected signal passes the readiness and completion reports.
 
 > Note: Results are from the current local walk-forward artifacts, not final claimed performance. Past performance does not guarantee future results.
  
@@ -251,6 +260,9 @@ python -m src.alpha.build_diagnostics
 
 # Check whether the selected alpha is ready for RL work
 python -m src.alpha.build_readiness
+
+# Check whether all project completion gates pass
+python -m src.build_completion_report
 ```
  
 ---
