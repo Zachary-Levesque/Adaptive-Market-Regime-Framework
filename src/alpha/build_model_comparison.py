@@ -53,6 +53,7 @@ def main() -> None:
         weighting_method=config.risk.weighting_method,
         volatility_lookback=config.risk.volatility_lookback,
         volatility_floor=config.risk.volatility_floor,
+        max_position_weight=config.risk.max_position_weight,
     )
     artifacts = comparator.build(
         technical_features=technical_features,
