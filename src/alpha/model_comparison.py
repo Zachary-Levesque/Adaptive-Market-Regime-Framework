@@ -56,7 +56,7 @@ class AlphaModelComparator:
     ) -> None:
         self.alpha_config = alpha_config
         self.regime_config = regime_config
-        self.baseline_specs = baseline_specs or build_default_baseline_specs()
+        self.baseline_specs = build_default_baseline_specs() if baseline_specs is None else baseline_specs
         self.transaction_cost_bps = transaction_cost_bps
         self.max_gross_exposure = max_gross_exposure
         self.long_fraction = long_fraction
@@ -77,6 +77,7 @@ class AlphaModelComparator:
         regime_labels: pd.DataFrame | pd.Series,
         epochs_override: int | None = None,
         include_ensemble: bool = True,
+        save_outputs: bool = True,
     ) -> AlphaComparisonArtifacts:
         regime_series = extract_regime_series(regime_labels)
         unique_regimes = sorted(int(regime) for regime in regime_series.dropna().unique())
@@ -143,8 +144,12 @@ class AlphaModelComparator:
         leaderboard = self._attach_signal_stats(leaderboard, signal_frames)
         leaderboard = self._attach_projected_backtest_stats(leaderboard, signal_frames, returns)
         sensitivity_report = self._build_cost_rebalance_sensitivity(signal_frames, returns)
-        signal_paths = self.save(signal_frames, fold_metrics, leaderboard, sensitivity_report)
-        best_model = self._resolve_selected_model(default=str(leaderboard.index[0]) if not leaderboard.empty else "")
+        if save_outputs:
+            signal_paths = self.save(signal_frames, fold_metrics, leaderboard, sensitivity_report)
+            best_model = self._resolve_selected_model(default=str(leaderboard.index[0]) if not leaderboard.empty else "")
+        else:
+            signal_paths = {}
+            best_model = self._select_from_leaderboard(leaderboard)
         best_signal_path = signal_paths.get(best_model)
         return AlphaComparisonArtifacts(
             fold_metrics=fold_metrics,
