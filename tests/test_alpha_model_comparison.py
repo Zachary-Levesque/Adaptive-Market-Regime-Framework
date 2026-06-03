@@ -584,6 +584,55 @@ def test_selection_manifest_prefers_realistic_positive_sensitivity_row(tmp_path:
     assert selection.loc[0, "projected_selection_eligible"] == 1.0
 
 
+def test_selection_manifest_ignores_only_lower_cost_sensitivity_candidate(tmp_path: Path):
+    comparator = AlphaModelComparator(
+        alpha_config=_minimal_alpha_config(tmp_path),
+        regime_config=_minimal_regime_config(tmp_path),
+        baseline_specs=[],
+        transaction_cost_bps=10.0,
+        weighting_method="inverse_volatility",
+    )
+    leaderboard = pd.DataFrame(
+        [
+            {
+                "model": "ridge",
+                "projected_backtest_sharpe": -0.4,
+                "projected_total_return": -0.2,
+                "projected_selection_eligible": 0.0,
+            },
+            {
+                "model": "cash",
+                "projected_backtest_sharpe": 0.0,
+                "projected_total_return": 0.0,
+                "projected_selection_eligible": 1.0,
+            },
+        ]
+    ).set_index("model")
+    signal_paths = {
+        "ridge": tmp_path / "ridge.parquet",
+        "cash": tmp_path / "cash.parquet",
+    }
+    sensitivity = pd.DataFrame(
+        [
+            {
+                "model": "ridge",
+                "transaction_cost_bps": 5.0,
+                "rebalance_interval_days": 21,
+                "weighting_method": "equal",
+                "active_signal_days": 1000,
+                "projected_backtest_sharpe": 0.2,
+                "projected_total_return": 0.03,
+                "projected_mean_turnover": 0.1,
+            }
+        ]
+    )
+
+    selection = comparator._build_selection_manifest(leaderboard, signal_paths, sensitivity)
+
+    assert selection.loc[0, "model"] == "cash"
+    assert selection.loc[0, "selection_method"] == "leaderboard"
+
+
 def test_selection_manifest_falls_back_to_leaderboard_when_no_tradable_sensitivity(tmp_path: Path):
     comparator = AlphaModelComparator(
         alpha_config=_minimal_alpha_config(tmp_path),
