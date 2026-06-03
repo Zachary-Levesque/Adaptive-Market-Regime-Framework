@@ -50,6 +50,7 @@ class AlphaModelComparator:
         weighting_method: str = "equal",
         volatility_lookback: int = 21,
         volatility_floor: float = 0.005,
+        max_position_weight: float = 1.0,
         min_regime_selection_folds: int = 3,
         min_selection_active_days: int = 504,
     ) -> None:
@@ -64,6 +65,7 @@ class AlphaModelComparator:
         self.weighting_method = str(weighting_method)
         self.volatility_lookback = max(1, int(volatility_lookback))
         self.volatility_floor = max(1e-12, float(volatility_floor))
+        self.max_position_weight = max(1e-12, float(max_position_weight))
         self.min_regime_selection_folds = max(1, int(min_regime_selection_folds))
         self.min_selection_active_days = max(1, int(min_selection_active_days))
 
@@ -805,8 +807,14 @@ class AlphaModelComparator:
 
         weights = pd.Series(0.0, index=clean.index, dtype=float)
         gross_side = self.max_gross_exposure / 2.0
-        weights.loc[long_names] = gross_side / len(long_names)
-        weights.loc[short_names] = -gross_side / len(short_names)
+        weights.loc[long_names] = self._cap_side_weights(
+            np.full(len(long_names), gross_side / len(long_names), dtype=float),
+            gross_side,
+        )
+        weights.loc[short_names] = -self._cap_side_weights(
+            np.full(len(short_names), gross_side / len(short_names), dtype=float),
+            gross_side,
+        )
         return weights
 
     @staticmethod
@@ -996,19 +1004,37 @@ class AlphaModelComparator:
     ) -> np.ndarray:
         method = self.weighting_method if weighting_method is None else str(weighting_method)
         if method != "inverse_volatility" or volatility_values is None:
-            return np.full(len(asset_indices), gross_side / len(asset_indices), dtype=float)
+            return self._cap_side_weights(np.full(len(asset_indices), gross_side / len(asset_indices), dtype=float), gross_side)
 
         vols = volatility_values[row_idx, asset_indices]
         valid = np.isfinite(vols) & (vols > 0.0)
         if not valid.any():
-            return np.full(len(asset_indices), gross_side / len(asset_indices), dtype=float)
+            return self._cap_side_weights(np.full(len(asset_indices), gross_side / len(asset_indices), dtype=float), gross_side)
 
         inverse = np.zeros(len(asset_indices), dtype=float)
         inverse[valid] = 1.0 / np.maximum(vols[valid], self.volatility_floor)
         total = float(inverse.sum())
         if total <= 0.0:
-            return np.full(len(asset_indices), gross_side / len(asset_indices), dtype=float)
-        return gross_side * inverse / total
+            return self._cap_side_weights(np.full(len(asset_indices), gross_side / len(asset_indices), dtype=float), gross_side)
+        return self._cap_side_weights(gross_side * inverse / total, gross_side)
+
+    def _cap_side_weights(self, weights: np.ndarray, gross_side: float) -> np.ndarray:
+        cap = float(self.max_position_weight)
+        if cap <= 0.0 or cap >= gross_side or weights.size == 0:
+            return weights
+
+        capped = np.minimum(weights.astype(float, copy=True), cap)
+        leftover = gross_side - float(capped.sum())
+        available = capped < cap
+        while leftover > 1e-12 and available.any():
+            increment = leftover / int(available.sum())
+            capped[available] = np.minimum(capped[available] + increment, cap)
+            new_leftover = gross_side - float(capped.sum())
+            if abs(new_leftover - leftover) < 1e-12:
+                break
+            leftover = new_leftover
+            available = capped < cap
+        return capped
 
     def _apply_rebalance_schedule(
         self,
