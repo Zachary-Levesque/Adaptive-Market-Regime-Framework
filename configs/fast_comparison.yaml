@@ -66,3 +66,4 @@ risk:
   weighting_method: "inverse_volatility"
   volatility_lookback: 21
   volatility_floor: 0.005
+  max_position_weight: 0.10
