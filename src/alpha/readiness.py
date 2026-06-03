@@ -36,6 +36,7 @@ class AlphaReadinessChecker:
         performance_report: pd.DataFrame,
         stress_report: pd.DataFrame | None = None,
         regime_diagnostics: pd.DataFrame | None = None,
+        data_quality_report: pd.DataFrame | None = None,
     ) -> pd.DataFrame:
         selected = selection.iloc[0] if not selection.empty else pd.Series(dtype=object)
         diagnostics = diagnostics_summary.iloc[0] if not diagnostics_summary.empty else pd.Series(dtype=object)
@@ -85,6 +86,7 @@ class AlphaReadinessChecker:
         ]
         rows.extend(self._benchmark_rows(performance_report, strategy))
         rows.extend(self._regime_rows(regime_diagnostics))
+        rows.extend(self._data_quality_rows(data_quality_report))
 
         if stress_report is not None and not stress_report.empty:
             n_days = pd.to_numeric(stress_report.get("n_days", pd.Series(dtype=float)), errors="coerce").fillna(0)
@@ -179,6 +181,40 @@ class AlphaReadinessChecker:
             )
 
         return rows
+
+    def _data_quality_rows(self, data_quality_report: pd.DataFrame | None) -> list[dict[str, object]]:
+        if data_quality_report is None or data_quality_report.empty:
+            return []
+        if not {"dataset", "covers_gfc"}.issubset(data_quality_report.columns):
+            return []
+
+        price_rows = data_quality_report.loc[data_quality_report["dataset"].eq("prices")]
+        if price_rows.empty:
+            return []
+
+        covers_gfc = price_rows["covers_gfc"].astype(bool)
+        missing_symbols = price_rows.loc[~covers_gfc, "symbol"].astype(str).tolist()
+        first_dates = pd.to_datetime(price_rows["first_valid_date"], errors="coerce")
+        earliest = first_dates.min()
+        latest = first_dates.max()
+        date_range = ""
+        if pd.notna(earliest) and pd.notna(latest):
+            date_range = f"{earliest.date()} to {latest.date()}"
+
+        return [
+            self._row(
+                "data_price_gfc_coverage",
+                len(missing_symbols) == 0,
+                ", ".join(missing_symbols),
+                "Every configured price symbol should have observations during the GFC stress window.",
+            ),
+            self._row(
+                "data_price_history_start",
+                bool(pd.notna(earliest) and earliest <= pd.Timestamp("2008-09-01")),
+                date_range,
+                "Price history should begin before the first configured GFC stress date.",
+            ),
+        ]
 
 
 def readiness_report_passes(report: pd.DataFrame) -> bool:
