@@ -63,6 +63,19 @@ def test_load_cached_prices_returns_saved_frame(tmp_path: Path):
     assert loaded.equals(prices)
 
 
+def test_load_cached_prices_accepts_overlapping_cache_window(tmp_path: Path):
+    ingester = MarketDataIngester(cache_dir=tmp_path)
+    prices = _sample_prices()
+
+    ingester._save_cached_prices(prices, ["SPY", "QQQ"], "2024-01-01", "2024-02-15", "1d")
+    loaded = ingester._load_cached_prices(["SPY", "QQQ"], "2023-01-01", "2024-12-31", "1d")
+
+    assert loaded is not None
+    assert loaded.index.min() == prices.index.min()
+    assert loaded.index.max() == prices.index.max()
+    assert list(loaded.columns.get_level_values(0).unique()) == ["QQQ", "SPY"]
+
+
 def test_fetch_stooq_csv_parses_valid_csv(monkeypatch):
     ingester = MarketDataIngester()
 
