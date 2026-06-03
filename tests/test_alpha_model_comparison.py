@@ -660,6 +660,33 @@ def test_selection_manifest_ignores_short_history_sensitivity_candidate(tmp_path
     assert selection.loc[0, "rebalance_interval_days"] == 21
 
 
+def test_signal_weight_projection_caps_single_position_weight(tmp_path: Path):
+    comparator = AlphaModelComparator(
+        alpha_config=_minimal_alpha_config(tmp_path),
+        regime_config=_minimal_regime_config(tmp_path),
+        baseline_specs=[],
+        long_fraction=0.5,
+        short_fraction=0.5,
+        max_position_weight=0.10,
+    )
+    index = pd.date_range("2024-01-01", periods=3, freq="B")
+    signals = pd.DataFrame(
+        {
+            "A": [4.0] * len(index),
+            "B": [3.0] * len(index),
+            "C": [-3.0] * len(index),
+            "D": [-4.0] * len(index),
+        },
+        index=index,
+    )
+    returns = pd.DataFrame(0.0, index=index, columns=signals.columns)
+
+    weights = comparator._construct_signal_weight_frame(signals, returns=returns)
+
+    assert weights.abs().max().max() <= 0.10
+    assert np.isclose(weights.loc[index[0]].abs().sum(), 0.40)
+
+
 def _minimal_alpha_config(tmp_path: Path) -> AlphaConfig:
     return AlphaConfig(
         hidden_size=8,
