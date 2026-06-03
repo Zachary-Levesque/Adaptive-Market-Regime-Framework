@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 from stable_baselines3 import PPO
 
+from src.alpha.readiness import load_readiness_status
 from src.config import load_config
 from src.rl.environment import TradingEnv
 
@@ -16,9 +17,22 @@ def run_rl_pipeline():
     parser = argparse.ArgumentParser(description="Run AMRF RL Position Sizing Pipeline.")
     parser.add_argument("--config", default="configs/config.yaml", help="Path to the YAML config file.")
     parser.add_argument("--mode", choices=["train", "predict"], default="predict", help="Train a new agent or generate signals.")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Run even if the selected alpha readiness gate has not passed.",
+    )
     args = parser.parse_args()
     
     config = load_config(args.config)
+    ready, _ = load_readiness_status(config.alpha.diagnostics_path.with_name("alpha_readiness_report.parquet"))
+    if not ready and not args.force:
+        raise SystemExit(
+            "Refusing to run RL position sizing: selected alpha is not ready. "
+            "Run `python -m src.alpha.build_readiness --config "
+            f"{args.config}` and only continue when it reports `Ready for RL: True`. "
+            "Use --force only for explicit experiments."
+        )
     
     # Load data
     processed_dir = Path(config.data.processed_dir)
@@ -36,7 +50,10 @@ def run_rl_pipeline():
         # Since train_rl uses its own argparse, we'll just re-implement the call here for simplicity
         # or we could refactor. For this CLI, we'll just use the existing script.
         import subprocess
-        subprocess.run(["python", "-m", "src.rl.training", "--config", args.config, "--timesteps", str(config.rl.total_timesteps)])
+        command = ["python", "-m", "src.rl.training", "--config", args.config, "--timesteps", str(config.rl.total_timesteps)]
+        if args.force:
+            command.append("--force")
+        subprocess.run(command, check=True)
     
     # Generate RL-tilted signals
     if not model_path.exists() and not (model_path.with_suffix(".zip")).exists():
