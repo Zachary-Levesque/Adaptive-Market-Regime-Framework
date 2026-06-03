@@ -159,6 +159,22 @@ class AlphaReadinessChecker:
 
         return rows
 
+
+def readiness_report_passes(report: pd.DataFrame) -> bool:
+    """Return whether a saved readiness report clears the RL gate."""
+    if report.empty or "ready_for_rl" not in report.columns:
+        return False
+    return bool(report["ready_for_rl"].all())
+
+
+def load_readiness_status(path: str | Path) -> tuple[bool, pd.DataFrame]:
+    """Load a readiness report and return its gate status."""
+    report_path = Path(path)
+    if not report_path.exists():
+        return False, pd.DataFrame()
+    report = pd.read_parquet(report_path)
+    return readiness_report_passes(report), report
+
     def _regime_rows(self, regime_diagnostics: pd.DataFrame | None) -> list[dict[str, object]]:
         if regime_diagnostics is None or regime_diagnostics.empty:
             return []
