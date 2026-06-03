@@ -91,6 +91,32 @@ def test_diagnostics_resolve_signal_path_prefers_selection_manifest(tmp_path):
     assert resolve_signal_path(config) == selected_path
 
 
+def test_diagnostics_resolve_signal_path_ignores_unready_rl_tilted_selection(tmp_path):
+    rl_path = tmp_path / "alpha_signals_rl_tilted.parquet"
+    rl_path.write_bytes(b"")
+    fallback_path = tmp_path / "signals" / "defensive_regime_selector.parquet"
+    fallback_path.parent.mkdir(parents=True, exist_ok=True)
+    fallback_path.write_bytes(b"")
+    selection_path = tmp_path / "alpha_signal_selection.parquet"
+    pd.DataFrame([{"model": "rl_tilted", "signal_path": str(rl_path)}]).to_parquet(selection_path)
+    diagnostics_path = tmp_path / "alpha_diagnostics.parquet"
+    pd.DataFrame([{"ready_for_rl": False}]).to_parquet(tmp_path / "alpha_readiness_report.parquet")
+    comparison_path = tmp_path / "alpha_model_comparison.parquet"
+    pd.DataFrame(
+        [{"model": "defensive_regime_selector", "signal_path": str(fallback_path)}]
+    ).to_parquet(tmp_path / "alpha_model_comparison_summary.parquet")
+    config = SimpleNamespace(
+        alpha=SimpleNamespace(
+            selection_path=selection_path,
+            signals_path=tmp_path / "fallback.parquet",
+            diagnostics_path=diagnostics_path,
+            comparison_path=comparison_path,
+        )
+    )
+
+    assert resolve_signal_path(config) == fallback_path
+
+
 def test_diagnostics_resolve_signal_path_override_wins(tmp_path):
     override_path = tmp_path / "override.parquet"
     config = SimpleNamespace(
