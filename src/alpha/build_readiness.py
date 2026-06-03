@@ -60,6 +60,8 @@ def main() -> None:
     performance_report = pd.read_parquet(config.risk.output_dir / "performance_report.parquet")
     stress_path = config.risk.output_dir / "stress_report.parquet"
     stress_report = pd.read_parquet(stress_path) if stress_path.exists() else pd.DataFrame()
+    data_quality_path = config.data.processed_dir / "data_quality_report.parquet"
+    data_quality_report = pd.read_parquet(data_quality_path) if data_quality_path.exists() else pd.DataFrame()
 
     checker = AlphaReadinessChecker(
         ReadinessThresholds(
@@ -73,6 +75,7 @@ def main() -> None:
         performance_report=performance_report,
         stress_report=stress_report,
         regime_diagnostics=regime_diagnostics,
+        data_quality_report=data_quality_report,
     )
     output_path = config.alpha.diagnostics_path.with_name("alpha_readiness_report.parquet")
     checker.save(report, output_path)
