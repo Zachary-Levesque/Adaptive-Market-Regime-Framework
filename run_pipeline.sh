@@ -25,6 +25,10 @@ python -m src.risk.build_phase4 --config configs/config.yaml
 echo "--- 7. Readiness Diagnostics ---"
 python -m src.alpha.build_readiness --config configs/config.yaml
 
+echo "--- 8. Daily Trade Ticket Generation (Intraday) ---"
+# Note: Requires ALPACA_API_KEY environment variable
+python -m src.execution.build_phase7 --config configs/config.yaml
+
 echo "--- Framework Execution Complete ---"
 echo "To start the dashboard:"
 echo "1. Terminal A: uvicorn src.dashboard.backend.main:app --reload"
