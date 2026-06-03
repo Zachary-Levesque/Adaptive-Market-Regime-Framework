@@ -39,9 +39,10 @@ class ProjectCompletionChecker:
     )
     REQUIRED_REGIME_ARTIFACTS = (
         "regime_labels.parquet",
-        "regime_probabilities.parquet",
-        "gmm_regime_labels.parquet",
-        "regime_diagnostics.parquet",
+        "regime_probs.parquet",
+        "gmm_validation.parquet",
+        "regime_summary.parquet",
+        "transition_matrix.parquet",
     )
 
     def __init__(self, config: AppConfig) -> None:
