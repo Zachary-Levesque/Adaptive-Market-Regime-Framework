@@ -222,3 +222,40 @@ def test_backtester_inverse_volatility_weights_reduce_high_vol_exposure():
 
     assert abs(weights.loc[index[-1], "A"]) > abs(weights.loc[index[-1], "B"])
     assert abs(weights.loc[index[-1], "C"]) > abs(weights.loc[index[-1], "D"])
+
+
+def test_backtester_caps_single_position_weight():
+    index = pd.date_range("2024-01-01", periods=3, freq="B")
+    returns = pd.DataFrame(
+        {
+            "A": [0.0, 0.01, 0.01],
+            "B": [0.0, 0.01, 0.01],
+            "C": [0.0, -0.01, -0.01],
+            "D": [0.0, -0.01, -0.01],
+        },
+        index=index,
+    )
+    signals = pd.DataFrame(
+        {
+            "A": [4.0] * len(index),
+            "B": [3.0] * len(index),
+            "C": [-3.0] * len(index),
+            "D": [-4.0] * len(index),
+        },
+        index=index,
+    )
+    backtester = AMRFBacktester(
+        returns=returns,
+        alpha_signals=signals,
+        config=BacktestConfig(
+            long_fraction=0.5,
+            short_fraction=0.5,
+            transaction_cost_bps=0.0,
+            max_position_weight=0.10,
+        ),
+    )
+
+    weights = backtester.construct_signal_weights(signals, returns=returns)
+
+    assert weights.abs().max().max() <= 0.10
+    assert np.isclose(weights.loc[index[0]].abs().sum(), 0.40)
