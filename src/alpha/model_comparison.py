@@ -308,15 +308,13 @@ class AlphaModelComparator:
         if candidates.empty:
             return None
 
-        realistic = candidates[
+        candidates = candidates[
             np.isclose(candidates["transaction_cost_bps"].astype(float), float(self.transaction_cost_bps))
         ]
-        if not realistic.empty:
-            candidates = realistic
-        else:
-            positive_cost = candidates[candidates["transaction_cost_bps"].astype(float).gt(0.0)]
-            if not positive_cost.empty:
-                candidates = positive_cost
+        if "weighting_method" in candidates.columns:
+            candidates = candidates[candidates["weighting_method"].astype(str).eq(self.weighting_method)]
+        if candidates.empty:
+            return None
 
         ranked = candidates.sort_values(
             [
