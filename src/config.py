@@ -76,6 +76,7 @@ class RiskConfig:
     weighting_method: str
     volatility_lookback: int
     volatility_floor: float
+    max_position_weight: float
 
 
 @dataclass(frozen=True)
@@ -204,6 +205,7 @@ def load_config(path: str | Path) -> AppConfig:
             weighting_method=str(risk_section.get("weighting_method", "equal")),
             volatility_lookback=max(1, int(risk_section.get("volatility_lookback", 21))),
             volatility_floor=max(1e-12, float(risk_section.get("volatility_floor", 0.005))),
+            max_position_weight=max(1e-12, float(risk_section.get("max_position_weight", 1.0))),
         ),
         rl=RLConfig(
             total_timesteps=int(rl_section.get("total_timesteps", 1000000)),
