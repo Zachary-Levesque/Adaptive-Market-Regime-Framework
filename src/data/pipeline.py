@@ -74,16 +74,24 @@ class DataPipeline:
         )
         returns = self.ingester.compute_returns(prices)
 
-        ff_factors = self.factor_loader.download_ff5(
-            start=self.config.start_date,
-            end=self.config.end_date,
+        ff_factors = self._download_or_load_processed(
+            dataset_name="factors",
+            path=self.config.processed_dir / "factors.parquet",
+            download=lambda: self.factor_loader.download_ff5(
+                start=self.config.start_date,
+                end=self.config.end_date,
+            ),
         )
         factors = self.factor_loader.align_with_returns(ff_factors, returns)
 
-        macro = self.factor_loader.download_macro_series(
-            series_map=self.DEFAULT_MACRO_SERIES,
-            start=self.config.start_date,
-            end=self.config.end_date,
+        macro = self._download_or_load_processed(
+            dataset_name="macro",
+            path=self.config.processed_dir / "macro.parquet",
+            download=lambda: self.factor_loader.download_macro_series(
+                series_map=self.DEFAULT_MACRO_SERIES,
+                start=self.config.start_date,
+                end=self.config.end_date,
+            ),
         )
         macro = macro.reindex(prices.index).ffill()
         vix_series = macro["VIXCLS"] if "VIXCLS" in macro.columns else None
@@ -131,6 +139,20 @@ class DataPipeline:
 
         for frame, path in outputs:
             self.ingester.save(frame, path)
+
+    def _download_or_load_processed(self, dataset_name: str, path: Path, download) -> pd.DataFrame:
+        try:
+            return download()
+        except Exception as exc:
+            if not path.exists():
+                raise
+            logger.warning(
+                "Unable to refresh {} from provider: {}. Using existing processed artifact {}.",
+                dataset_name,
+                exc,
+                path,
+            )
+            return pd.read_parquet(path)
 
     def _build_data_quality_report(
         self,
