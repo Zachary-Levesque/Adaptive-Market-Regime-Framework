@@ -185,6 +185,39 @@ def test_backtester_holds_weights_between_rebalance_dates():
     assert artifacts.weights.loc[index[4], "A"] < 0
 
 
+def test_backtester_supports_long_only_and_explicit_flat_targets():
+    index = pd.date_range("2024-01-01", periods=4, freq="B")
+    returns = pd.DataFrame(
+        {
+            "A": [0.0, 0.02, 0.02, 0.02],
+            "B": [0.0, -0.02, -0.02, -0.02],
+        },
+        index=index,
+    )
+    signals = pd.DataFrame(
+        {
+            "A": [1.0, 0.0, 1.0, 1.0],
+            "B": [-1.0, 0.0, -1.0, -1.0],
+        },
+        index=index,
+    )
+
+    artifacts = AMRFBacktester(
+        returns=returns,
+        alpha_signals=signals,
+        config=BacktestConfig(
+            long_fraction=0.5,
+            short_fraction=0.0,
+            transaction_cost_bps=0.0,
+            rebalance_interval_days=3,
+        ),
+    ).run()
+
+    assert artifacts.weights.loc[index[1], "A"] > 0
+    assert np.isclose(artifacts.weights.loc[index[1], "B"], 0.0)
+    assert np.isclose(artifacts.weights.loc[index[2]].abs().sum(), 0.0)
+
+
 def test_backtester_inverse_volatility_weights_reduce_high_vol_exposure():
     index = pd.date_range("2024-01-01", periods=8, freq="B")
     returns = pd.DataFrame(
