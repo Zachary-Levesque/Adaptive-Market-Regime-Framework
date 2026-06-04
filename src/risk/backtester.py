@@ -144,30 +144,32 @@ class AMRFBacktester:
                 continue
 
             n_assets = len(clean)
-            n_long = max(1, int(np.ceil(n_assets * self.config.long_fraction)))
-            n_short = max(1, int(np.ceil(n_assets * self.config.short_fraction)))
+            n_long = self._side_count(n_assets, self.config.long_fraction)
+            n_short = self._side_count(n_assets, self.config.short_fraction)
+            if n_long == 0 and n_short == 0:
+                continue
             ranked = clean.sort_values()
 
-            short_names = ranked.head(n_short).index.tolist()
-            long_names = ranked.tail(n_long).index.tolist()
+            short_names = ranked.head(n_short).index.tolist() if n_short else []
+            long_names = ranked.tail(n_long).index.tolist() if n_long else []
 
             if set(long_names) & set(short_names):
                 # Degenerate one-asset universe; stay flat.
                 continue
 
-            gross_side = self.config.max_gross_exposure / 2.0
+            long_gross, short_gross = self._side_gross_exposures(bool(long_names), bool(short_names))
             if long_names:
                 weights.loc[date, long_names] = self._side_weights(
                     names=long_names,
                     date=date,
-                    gross_side=gross_side,
+                    gross_side=long_gross,
                     volatility=volatility,
                 )
             if short_names:
                 weights.loc[date, short_names] = -self._side_weights(
                     names=short_names,
                     date=date,
-                    gross_side=gross_side,
+                    gross_side=short_gross,
                     volatility=volatility,
                 )
 
@@ -357,3 +359,20 @@ class AMRFBacktester:
         normalized = pd.Series(labels).copy()
         normalized.index = pd.to_datetime(normalized.index).tz_localize(None)
         return pd.to_numeric(normalized, errors="coerce").sort_index()
+
+    @staticmethod
+    def _side_count(n_assets: int, fraction: float) -> int:
+        fraction = max(0.0, float(fraction))
+        if fraction == 0.0 or n_assets <= 0:
+            return 0
+        return max(1, int(np.ceil(n_assets * fraction)))
+
+    def _side_gross_exposures(self, has_longs: bool, has_shorts: bool) -> tuple[float, float]:
+        gross = float(self.config.max_gross_exposure)
+        if has_longs and has_shorts:
+            return gross / 2.0, gross / 2.0
+        if has_longs:
+            return gross, 0.0
+        if has_shorts:
+            return 0.0, gross
+        return 0.0, 0.0
