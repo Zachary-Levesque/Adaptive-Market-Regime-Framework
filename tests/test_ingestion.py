@@ -177,6 +177,29 @@ def test_load_local_price_frames_finds_stooq_style_txt(tmp_path: Path):
     assert ("AAPL", "Adj Close") in frames[0].columns
 
 
+def test_load_local_price_frames_accepts_vendor_alias_columns_and_names(tmp_path: Path):
+    raw_dir = tmp_path / "raw" / "archive"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "spy_us.txt").write_text(
+        "\n".join(
+            [
+                "DATE,OPEN,HIGH,LOW,CLOSE,VOL",
+                "20240102,100,101,99,100.5,1000",
+                "20240103,101,102,100,101.5,1100",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    ingester = MarketDataIngester(local_data_dir=tmp_path / "raw")
+    frames, missing = ingester._load_local_price_frames(["SPY"], "2024-01-01", "2024-01-31")
+
+    assert missing == []
+    assert len(frames) == 1
+    assert ("SPY", "Volume") in frames[0].columns
+    assert frames[0].loc[pd.Timestamp("2024-01-02"), ("SPY", "Volume")] == 1000
+
+
 def test_inspect_local_data_reports_found_and_missing(tmp_path: Path):
     raw_dir = tmp_path / "raw"
     raw_dir.mkdir()
