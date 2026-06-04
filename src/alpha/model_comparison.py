@@ -814,23 +814,27 @@ class AlphaModelComparator:
             return pd.Series(dtype=float)
 
         n_assets = len(clean)
-        n_long = max(1, int(np.ceil(n_assets * self.long_fraction)))
-        n_short = max(1, int(np.ceil(n_assets * self.short_fraction)))
-        long_names = clean.tail(n_long).index
-        short_names = clean.head(n_short).index
+        n_long = self._side_count(n_assets, self.long_fraction)
+        n_short = self._side_count(n_assets, self.short_fraction)
+        if n_long == 0 and n_short == 0:
+            return pd.Series(dtype=float)
+        long_names = clean.tail(n_long).index if n_long else pd.Index([])
+        short_names = clean.head(n_short).index if n_short else pd.Index([])
         if set(long_names) & set(short_names):
             return pd.Series(dtype=float)
 
         weights = pd.Series(0.0, index=clean.index, dtype=float)
-        gross_side = self.max_gross_exposure / 2.0
-        weights.loc[long_names] = self._cap_side_weights(
-            np.full(len(long_names), gross_side / len(long_names), dtype=float),
-            gross_side,
-        )
-        weights.loc[short_names] = -self._cap_side_weights(
-            np.full(len(short_names), gross_side / len(short_names), dtype=float),
-            gross_side,
-        )
+        long_gross, short_gross = self._side_gross_exposures(bool(len(long_names)), bool(len(short_names)))
+        if len(long_names):
+            weights.loc[long_names] = self._cap_side_weights(
+                np.full(len(long_names), long_gross / len(long_names), dtype=float),
+                long_gross,
+            )
+        if len(short_names):
+            weights.loc[short_names] = -self._cap_side_weights(
+                np.full(len(short_names), short_gross / len(short_names), dtype=float),
+                short_gross,
+            )
         return weights
 
     @staticmethod
@@ -969,7 +973,6 @@ class AlphaModelComparator:
         method = self.weighting_method if weighting_method is None else str(weighting_method)
         values = signals.to_numpy(dtype=float, copy=True)
         weights = np.zeros(values.shape, dtype=float)
-        gross_side = self.max_gross_exposure / 2.0
         volatility_values = None
         if returns is not None and method == "inverse_volatility":
             volatility = returns.reindex(index=signals.index, columns=signals.columns).rolling(
@@ -985,28 +988,33 @@ class AlphaModelComparator:
                 continue
 
             n_assets = len(valid)
-            n_long = max(1, int(np.ceil(n_assets * self.long_fraction)))
-            n_short = max(1, int(np.ceil(n_assets * self.short_fraction)))
+            n_long = self._side_count(n_assets, self.long_fraction)
+            n_short = self._side_count(n_assets, self.short_fraction)
+            if n_long == 0 and n_short == 0:
+                continue
             ranked = valid[np.argsort(row[valid], kind="mergesort")]
-            short_idx = ranked[:n_short]
-            long_idx = ranked[-n_long:]
+            short_idx = ranked[:n_short] if n_short else np.array([], dtype=int)
+            long_idx = ranked[-n_long:] if n_long else np.array([], dtype=int)
             if np.intersect1d(long_idx, short_idx, assume_unique=False).size:
                 continue
 
-            weights[row_idx, long_idx] = self._side_weight_values(
-                long_idx,
-                row_idx,
-                gross_side,
-                volatility_values,
-                weighting_method=method,
-            )
-            weights[row_idx, short_idx] = -self._side_weight_values(
-                short_idx,
-                row_idx,
-                gross_side,
-                volatility_values,
-                weighting_method=method,
-            )
+            long_gross, short_gross = self._side_gross_exposures(bool(len(long_idx)), bool(len(short_idx)))
+            if len(long_idx):
+                weights[row_idx, long_idx] = self._side_weight_values(
+                    long_idx,
+                    row_idx,
+                    long_gross,
+                    volatility_values,
+                    weighting_method=method,
+                )
+            if len(short_idx):
+                weights[row_idx, short_idx] = -self._side_weight_values(
+                    short_idx,
+                    row_idx,
+                    short_gross,
+                    volatility_values,
+                    weighting_method=method,
+                )
 
         return pd.DataFrame(weights, index=signals.index, columns=signals.columns)
 
@@ -1051,6 +1059,23 @@ class AlphaModelComparator:
             leftover = new_leftover
             available = capped < cap
         return capped
+
+    @staticmethod
+    def _side_count(n_assets: int, fraction: float) -> int:
+        fraction = max(0.0, float(fraction))
+        if fraction == 0.0 or n_assets <= 0:
+            return 0
+        return max(1, int(np.ceil(n_assets * fraction)))
+
+    def _side_gross_exposures(self, has_longs: bool, has_shorts: bool) -> tuple[float, float]:
+        gross = float(self.max_gross_exposure)
+        if has_longs and has_shorts:
+            return gross / 2.0, gross / 2.0
+        if has_longs:
+            return gross, 0.0
+        if has_shorts:
+            return 0.0, gross
+        return 0.0, 0.0
 
     def _apply_rebalance_schedule(
         self,
