@@ -812,6 +812,8 @@ class AlphaModelComparator:
         clean = group.set_index("ticker")["prediction"].dropna().sort_values()
         if clean.empty:
             return pd.Series(dtype=float)
+        if float(clean.abs().sum()) == 0.0:
+            return pd.Series(0.0, index=clean.index, dtype=float)
 
         n_assets = len(clean)
         n_long = self._side_count(n_assets, self.long_fraction)
@@ -986,6 +988,8 @@ class AlphaModelComparator:
             valid = np.flatnonzero(np.isfinite(row))
             if len(valid) == 0:
                 continue
+            if float(np.abs(row[valid]).sum()) == 0.0:
+                continue
 
             n_assets = len(valid)
             n_long = self._side_count(n_assets, self.long_fraction)
@@ -1091,8 +1095,11 @@ class AlphaModelComparator:
         last_rebalance_pos: int | None = None
         for pos, (date, row) in enumerate(weights.iterrows()):
             has_signal = bool(row.abs().sum() > 0.0)
-            should_rebalance = has_signal and (
-                last_rebalance_pos is None or pos - last_rebalance_pos >= interval
+            has_flat_target = not has_signal and last_rebalance_pos is not None
+            should_rebalance = (
+                has_flat_target
+                or has_signal
+                and (last_rebalance_pos is None or pos - last_rebalance_pos >= interval)
             )
             if should_rebalance:
                 current = row.copy()
