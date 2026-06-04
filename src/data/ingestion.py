@@ -74,7 +74,13 @@ class MarketDataIngester:
     ) -> pd.DataFrame:
         """Download OHLCV data as a ticker-first MultiIndex DataFrame."""
         requested_tickers = list(dict.fromkeys(tickers))
-        cached = self._load_cached_prices(requested_tickers, start, end, interval)
+        cached = self._load_cached_prices(
+            requested_tickers,
+            start,
+            end,
+            interval,
+            require_full_start_coverage=self.allow_remote_downloads,
+        )
         if cached is not None:
             logger.info("Loaded cached price history for {} tickers", len(cached.columns.levels[0]))
             return cached
@@ -104,6 +110,19 @@ class MarketDataIngester:
 
         unresolved = self._missing_from_frames(requested_tickers, frames)
         if not frames or unresolved:
+            fallback_cached = self._load_cached_prices(
+                requested_tickers,
+                start,
+                end,
+                interval,
+                require_full_start_coverage=False,
+            )
+            if fallback_cached is not None:
+                logger.warning(
+                    "Remote refresh failed; falling back to overlapping cached price history. "
+                    "Data quality gates will flag any requested history gaps."
+                )
+                return fallback_cached
             local_hint = self._format_local_data_hint(unresolved or requested_tickers)
             remote_hint = (
                 "Remote downloads are disabled in configs/config.yaml (`data.allow_remote_downloads: false`)."
@@ -322,13 +341,23 @@ class MarketDataIngester:
         start: str,
         end: str,
         interval: str,
+        require_full_start_coverage: bool = False,
     ) -> pd.DataFrame | None:
         cache_path = self._cache_path(tickers, start, end, interval)
         if cache_path is None:
             return None
 
         if cache_path.exists():
-            return pd.read_parquet(cache_path)
+            cached = self._filter_cached_prices(pd.read_parquet(cache_path), tickers, start, end)
+            if cached is None:
+                return None
+            if require_full_start_coverage and cached.index.min() > pd.Timestamp(start):
+                logger.info(
+                    "Ignoring partial cached price history from {} because a full-history refresh was requested.",
+                    cache_path,
+                )
+                return None
+            return cached
 
         if self.cache_dir is None or not self.cache_dir.exists():
             return None
@@ -341,9 +370,9 @@ class MarketDataIngester:
         for candidate in candidates:
             cached = self._filter_cached_prices(pd.read_parquet(candidate), tickers, start, end)
             if cached is not None:
-                if self.allow_remote_downloads and cached.index.min() > pd.Timestamp(start):
+                if require_full_start_coverage and cached.index.min() > pd.Timestamp(start):
                     logger.info(
-                        "Ignoring partial cached price history from {} because remote downloads are enabled.",
+                        "Ignoring partial cached price history from {} because a full-history refresh was requested.",
                         candidate,
                     )
                     continue
