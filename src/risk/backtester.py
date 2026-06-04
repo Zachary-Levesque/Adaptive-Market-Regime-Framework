@@ -142,6 +142,8 @@ class AMRFBacktester:
             clean = pd.to_numeric(row, errors="coerce").dropna()
             if clean.empty:
                 continue
+            if float(clean.abs().sum()) == 0.0:
+                continue
 
             n_assets = len(clean)
             n_long = self._side_count(n_assets, self.config.long_fraction)
@@ -187,8 +189,11 @@ class AMRFBacktester:
 
         for pos, (date, row) in enumerate(weights.iterrows()):
             has_signal = bool(row.abs().sum() > 0.0)
-            should_rebalance = has_signal and (
-                last_rebalance_pos is None or pos - last_rebalance_pos >= interval
+            has_flat_target = not has_signal and last_rebalance_pos is not None
+            should_rebalance = (
+                has_flat_target
+                or has_signal
+                and (last_rebalance_pos is None or pos - last_rebalance_pos >= interval)
             )
             if should_rebalance:
                 current = row.copy()
