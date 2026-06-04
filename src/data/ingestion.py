@@ -493,9 +493,7 @@ class MarketDataIngester:
         if frame.empty:
             return None
 
-        lowered = {column.lower(): column for column in frame.columns}
-        if "date" not in lowered:
-            raise ValueError(f"Local price file {path} is missing a Date column.")
+        lowered = {self._normalize_local_column_name(column): column for column in frame.columns}
 
         rename_map = {}
         aliases = {
@@ -513,6 +511,8 @@ class MarketDataIngester:
                     rename_map[lowered[candidate]] = canonical
                     break
         frame = frame.rename(columns=rename_map)
+        if "date" not in frame.columns:
+            raise ValueError(f"Local price file {path} is missing a Date column.")
 
         if "adj close" not in frame.columns and "close" in frame.columns:
             frame["adj close"] = frame["close"]
@@ -541,6 +541,10 @@ class MarketDataIngester:
         normalized.columns = pd.MultiIndex.from_product([[ticker], normalized.columns])
         normalized.index = pd.to_datetime(normalized.index).tz_localize(None)
         return normalized
+
+    @staticmethod
+    def _normalize_local_column_name(column: object) -> str:
+        return str(column).strip().lower().strip("<>").replace(" ", "_")
 
     def _save_cached_prices(
         self,
