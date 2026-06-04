@@ -490,7 +490,11 @@ class MarketDataIngester:
         if "volume" not in frame.columns:
             frame["volume"] = np.nan
 
-        frame["date"] = pd.to_datetime(frame["date"])
+        date_values = frame["date"].astype(str).str.strip()
+        if date_values.str.fullmatch(r"\d{8}").all():
+            frame["date"] = pd.to_datetime(date_values, format="%Y%m%d")
+        else:
+            frame["date"] = pd.to_datetime(frame["date"])
         frame = frame.set_index("date").sort_index()
         frame = frame.loc[(frame.index >= start) & (frame.index <= end)]
 
