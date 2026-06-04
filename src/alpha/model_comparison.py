@@ -137,9 +137,11 @@ class AlphaModelComparator:
         fold_metrics = pd.concat(fold_frames, ignore_index=True) if fold_frames else pd.DataFrame()
         signal_frames = self._with_regime_selector_signal(signal_frames, fold_metrics, regime_series)
         signal_frames = self._with_defensive_regime_selector_signal(signal_frames, regime_series, returns)
+        signal_frames = self._with_risk_managed_signals(signal_frames, returns)
         leaderboard = self._summarize(fold_metrics)
         leaderboard = self._with_regime_selector_candidate(leaderboard, fold_metrics)
         leaderboard = self._with_defensive_regime_selector_candidate(leaderboard, signal_frames, regime_series, returns)
+        leaderboard = self._with_risk_managed_candidates(leaderboard, signal_frames, returns)
         leaderboard = self._with_cash_candidate(leaderboard)
         leaderboard = self._attach_signal_stats(leaderboard, signal_frames)
         leaderboard = self._attach_projected_backtest_stats(leaderboard, signal_frames, returns)
@@ -677,6 +679,70 @@ class AlphaModelComparator:
                 selections[regime] = str(ranked.iloc[0]["model"])
 
         return selections
+
+    def _with_risk_managed_signals(
+        self,
+        signal_frames: dict[str, pd.DataFrame],
+        returns: pd.DataFrame,
+    ) -> dict[str, pd.DataFrame]:
+        if returns.empty:
+            return signal_frames
+
+        benchmark = returns["SPY"] if "SPY" in returns.columns else returns.mean(axis=1)
+        benchmark = pd.to_numeric(benchmark, errors="coerce").fillna(0.0)
+        trailing_return = (1.0 + benchmark).rolling(63, min_periods=21).apply(np.prod, raw=True) - 1.0
+        trailing_vol = benchmark.rolling(21, min_periods=10).std(ddof=0)
+        risk_off = trailing_return.lt(0.0) | trailing_vol.gt(trailing_vol.rolling(252, min_periods=63).quantile(0.8))
+
+        enriched = dict(signal_frames)
+        base_models = [
+            model_name
+            for model_name in signal_frames
+            if model_name not in {"cash"} and not model_name.startswith("risk_managed_")
+        ]
+        for model_name in base_models:
+            frame = signal_frames[model_name].copy()
+            aligned_risk_off = risk_off.reindex(frame.index).fillna(False)
+            frame.loc[aligned_risk_off] = 0.0
+            enriched[f"risk_managed_{model_name}"] = frame
+        return enriched
+
+    def _with_risk_managed_candidates(
+        self,
+        leaderboard: pd.DataFrame,
+        signal_frames: dict[str, pd.DataFrame],
+        returns: pd.DataFrame,
+    ) -> pd.DataFrame:
+        rows = []
+        for model_name, signals in signal_frames.items():
+            if not model_name.startswith("risk_managed_"):
+                continue
+            stats = self._project_signal_backtest(signals, returns)
+            rows.append(
+                {
+                    "model": model_name,
+                    "n_rows": 0,
+                    "n_folds": 0,
+                    "n_regimes": 0,
+                    "mean_sharpe": stats["projected_backtest_sharpe"],
+                    "median_sharpe": stats["projected_backtest_sharpe"],
+                    "mean_net_sharpe": stats["projected_backtest_sharpe"],
+                    "mean_ic": 0.0,
+                    "mean_rank_ic": 0.0,
+                    "mean_hit_rate": 0.0,
+                    "mean_turnover": stats["projected_mean_turnover"],
+                    "mean_transaction_cost": stats["projected_mean_turnover"] * (self.transaction_cost_bps / 10_000.0),
+                    "mean_train_size": 0.0,
+                    "mean_test_size": 0.0,
+                    **stats,
+                }
+            )
+        if not rows:
+            return leaderboard
+
+        risk_managed = pd.DataFrame(rows).set_index("model")
+        combined = risk_managed if leaderboard.empty else pd.concat([leaderboard, risk_managed], sort=False)
+        return combined.sort_values(["mean_net_sharpe", "mean_sharpe", "mean_ic"], ascending=False)
 
     def _select_models_by_regime(self, fold_metrics: pd.DataFrame) -> dict[int, str]:
         if fold_metrics.empty:
