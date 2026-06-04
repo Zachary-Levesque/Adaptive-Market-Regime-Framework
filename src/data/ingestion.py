@@ -469,9 +469,20 @@ class MarketDataIngester:
             raise ValueError(f"Local price file {path} is missing a Date column.")
 
         rename_map = {}
-        for canonical in ["date", "open", "high", "low", "close", "adj close", "adj_close", "volume"]:
-            if canonical in lowered:
-                rename_map[lowered[canonical]] = canonical
+        aliases = {
+            "date": ("date", "datetime", "timestamp"),
+            "open": ("open", "o"),
+            "high": ("high", "h"),
+            "low": ("low", "l"),
+            "close": ("close", "c"),
+            "adj close": ("adj close", "adj_close", "adjclose", "adjusted close", "adjusted_close"),
+            "volume": ("volume", "vol", "v"),
+        }
+        for canonical, candidates in aliases.items():
+            for candidate in candidates:
+                if candidate in lowered:
+                    rename_map[lowered[candidate]] = canonical
+                    break
         frame = frame.rename(columns=rename_map)
 
         if "adj close" not in frame.columns and "close" in frame.columns:
@@ -548,6 +559,8 @@ class MarketDataIngester:
         return [
             f"{base}.us.txt",
             f"{base}.us.csv",
+            f"{base}_us.txt",
+            f"{base}_us.csv",
             f"{base}.txt",
             f"{base}.csv",
         ]
