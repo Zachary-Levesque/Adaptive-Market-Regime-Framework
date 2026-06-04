@@ -341,6 +341,12 @@ class MarketDataIngester:
         for candidate in candidates:
             cached = self._filter_cached_prices(pd.read_parquet(candidate), tickers, start, end)
             if cached is not None:
+                if self.allow_remote_downloads and cached.index.min() > pd.Timestamp(start):
+                    logger.info(
+                        "Ignoring partial cached price history from {} because remote downloads are enabled.",
+                        candidate,
+                    )
+                    continue
                 logger.info("Using overlapping cached price history from {}", candidate)
                 return cached
 
