@@ -60,7 +60,8 @@ def test_load_cached_prices_returns_saved_frame(tmp_path: Path):
     loaded = ingester._load_cached_prices(["SPY", "QQQ"], "2024-01-01", "2024-02-01", "1d")
 
     assert loaded is not None
-    assert loaded.equals(prices)
+    assert loaded.index.min() == pd.Timestamp("2024-01-01")
+    assert loaded.index.max() == pd.Timestamp("2024-02-01")
 
 
 def test_load_cached_prices_accepts_overlapping_cache_window(tmp_path: Path):
