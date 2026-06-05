@@ -18,44 +18,19 @@ A momentum strategy that thrives in a bull trend destroys capital in a sideways 
 
 Implemented and tested:
 
-1. **Builds** historical prices, returns, factors, macro data, technical features, and regime features
-2. **Detects** market regimes with HMM probabilities, GMM validation, Bayesian smoothing, and Kalman filtering
-3. **Trains and compares** regime-specific LSTM/Transformer ensembles against simpler baseline alpha models
-4. **Selects** an alpha signal using walk-forward, transaction-cost, rebalance, forward-return horizon, and projected-backtest evidence
-5. **Backtests** the selected signal against SPY, equal-weight, and momentum baselines
-6. **Reports** alpha diagnostics, regime-conditional results, stress tests, and pre-RL readiness checks
+1. Builds historical prices, returns, factors, macro data, technical features, and regime features
+2. Detects market regimes with HMM probabilities, GMM validation, Bayesian smoothing, and Kalman filtering
+3. Trains and compares regime-specific alpha models against simpler baselines
+4. Selects an alpha signal using walk-forward, transaction-cost, rebalance, forward-return horizon, and projected-backtest evidence
+5. Backtests the selected signal against SPY, equal-weight, and momentum baselines
+6. Reports alpha diagnostics, regime-conditional results, stress tests, readiness checks, RL artifacts, and a dashboard
 
-Implemented but gated:
+Implemented but still research-gated:
 
 1. PPO reinforcement-learning position sizing
 2. Intraday execution through Alpaca
-3. FastAPI/React dashboard and live daily recommendation workflow
 
-These layers are intentionally blocked by the research gate. The project should not move to RL, execution, or live recommendations until `python -m src.alpha.build_readiness` and `python -m src.build_completion_report` pass. The current local artifacts show a positive but weak alpha signal that underperforms simple benchmarks and does not have GFC-era stress coverage.
-
-Target daily output once the planned live layer exists:
- 
-```
-═══════════════════════════════════════════════════
-  AMRF DAILY SIGNAL — 2026-05-19
-═══════════════════════════════════════════════════
-  REGIME: Bull Trending (81%) | Low-Vol (13%) | Bear (4%) | Crisis (2%)
- 
-  TRADE SIGNALS:
-  ┌─────────┬──────────┬──────────┬─────────────┬──────────┐
-  │ Ticker  │ Signal   │ Size     │ Conviction  │ Stop     │
-  ├─────────┼──────────┼──────────┼─────────────┼──────────┤
-  │ NVDA    │ LONG     │ $2,340   │ 82%         │ -5.2%    │
-  │ TSM     │ LONG     │ $1,800   │ 74%         │ -4.8%    │
-  │ AMD     │ LONG     │ $1,100   │ 67%         │ -5.5%    │
-  │ MCHI    │ SHORT    │ $800     │ 71%         │ +4.1%    │
-  │ IBIT    │ FLAT     │ $0       │ N/A         │ N/A      │
-  └─────────┴──────────┴──────────┴─────────────┴──────────┘
- 
-  PORTFOLIO METRICS:
-  Expected Sharpe: 1.84 | CVaR (95%): -2.3% | Max Position: 23.4%
-═══════════════════════════════════════════════════
-```
+The current selected signal is `regime_portfolio_selector`. The readiness gate passes, but the RL layer remains an exploratory extension rather than the production baseline.
  
 ---
  
@@ -164,27 +139,38 @@ Full-stack dashboard with a FastAPI backend and React/Tailwind frontend. Provide
 ---
  
 ## Results
- 
+
 Current local artifact snapshot from `data/results/performance_report.parquet`:
 
 | Metric | AMRF Strategy | Buy & Hold SPY | Equal Weight | 63D Momentum |
 |---|---|---|---|---|
-| Annual Return | 0.52% | 18.49% | 17.80% | 0.44% |
-| Sharpe Ratio | 0.10 | 1.25 | 1.05 | 0.10 |
-| Max Drawdown | -17.44% | -20.49% | -37.16% | -15.19% |
-| Calmar Ratio | 0.03 | 0.90 | 0.48 | 0.03 |
-| Win Rate | 51.27% | 54.22% | 56.65% | 50.20% |
- 
-Alpha diagnostics currently score the selected signal against a 5-trading-day forward-return target. The latest selected non-RL signal is `regime_selector`: mean IC 0.0317, mean rank IC 0.0327, and IC positive on 53.49% of scored days. Regime-level rank IC is positive in all four regimes, but realized Sharpe, benchmark-relative performance, and GFC stress coverage remain below the final completion gate.
+| Annual Return | 17.32% | 13.34% | 11.75% | 8.11% |
+| Sharpe Ratio | 0.94 | 0.87 | 0.74 | 0.60 |
+| Sortino Ratio | 0.89 | 0.82 | 0.71 | 0.56 |
+| Calmar Ratio | 0.70 | 0.40 | 0.24 | 0.27 |
+| Max Drawdown | -24.82% | -33.73% | -49.19% | -30.31% |
+| Total Return | 16.44x | 8.41x | 6.30x | 3.04x |
 
-Current completion status from `data/results/project_completion_report.parquet`: **not complete**. The blocking checks are:
+Selected-signal diagnostics from `data/processed/alpha_diagnostics_by_regime.parquet`:
 
-- selected-strategy Sharpe below 0.5
-- selected strategy underperforms SPY and equal-weight benchmarks
-- configured price history starts after the 2008 GFC stress window
-- GFC stress scenario has no overlap with the selected backtest
+| Regime | Mean IC | Mean Rank IC | IC Positive Rate | Mean Hit Rate |
+|---|---:|---:|---:|---:|
+| Bull Trending | 0.030132 | 0.058133 | 0.525140 | 0.512389 |
+| Low-Vol Compression | 0.056953 | 0.044020 | 0.557745 | 0.506781 |
+| Bear Trending | -0.000562 | 0.011471 | 0.501268 | 0.493473 |
+| High-Vol Crisis | 0.052957 | 0.033731 | 0.563847 | 0.529365 |
 
-This means the next research step is not RL. The next step is to supply true 2007-2009 data coverage or revise the universe/proxy policy explicitly, then improve alpha/portfolio construction until the selected signal passes the readiness and completion reports.
+RL backtest comparison on the 2022-2024 test slice:
+
+| Series | Sharpe | Total Return |
+|---|---:|---:|
+| RL agent policy | 0.4976 | 0.2772 |
+| RL agent execution | -0.1090 | -0.1246 |
+| Static signal policy | 0.7871 | 0.5188 |
+| Static signal execution | 0.3781 | 0.1842 |
+| SPY | 0.7228 | 0.3718 |
+
+The honest takeaway is that the static signal is the production baseline. The PPO agent learned a positive policy on paper, but execution costs and turnover still reduce realized test performance below the static signal.
 
 > Note: Results are from the current local walk-forward artifacts, not final claimed performance. Past performance does not guarantee future results.
  
@@ -231,38 +217,32 @@ AMRF/
 ---
  
 ## Quick Start
- 
+
 ```bash
 # Clone the repository
-git clone https://github.com/Zachary-Levesque/AMRF.git
-cd AMRF
- 
+git clone https://github.com/Zachary-Levesque/Adaptive-Market-Regime-Framework.git
+cd Adaptive-Market-Regime-Framework
+
 # Install dependencies
 pip install -r requirements.txt
- 
-# Run data pipeline
-python -m src.data.build_phase1
- 
-# Train regime model
-python -m src.regime.build_phase2
- 
-# Train regime-specific alpha ensemble
-python -m src.alpha.build_phase3
 
-# Compare alpha models against baselines and select signal
-python -m src.alpha.build_model_comparison
+# Import Stooq bulk data
+python -m src.data.import_price_files --config configs/config.yaml --source /path/to/d_us_txt.zip
 
-# Run backtest
-python -m src.risk.build_phase4
+# Build the pipeline
+python -m src.data.build_phase1 --config configs/config.yaml
+python -m src.regime.build_phase2 --config configs/config.yaml
+python -m src.alpha.build_model_comparison --config configs/config.yaml --skip-ensemble
+python -m src.risk.build_phase4 --config configs/config.yaml
+python -m src.alpha.build_diagnostics --config configs/config.yaml
+python -m src.alpha.build_readiness --config configs/config.yaml
 
-# Diagnose selected signal quality
-python -m src.alpha.build_diagnostics
+# Train and evaluate the PPO layer
+python -m src.rl.train_ppo --config configs/config.yaml
+python -m src.rl.backtest_rl --config configs/config.yaml
 
-# Check whether the selected alpha is ready for RL work
-python -m src.alpha.build_readiness
-
-# Check whether all project completion gates pass
-python -m src.build_completion_report
+# Launch the dashboard
+streamlit run dashboard/app.py
 ```
  
 ---
