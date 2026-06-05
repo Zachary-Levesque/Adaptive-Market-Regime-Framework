@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from gymnasium import spaces
 
-from src.rl.data import normalize_signal_scores
+from src.risk.backtester import AMRFBacktester, BacktestConfig
 
 
 @dataclass(frozen=True)
@@ -40,11 +40,18 @@ class TradingEnvironment(gym.Env):
         random_start: bool = False,
         initial_portfolio_value: float = 1.0,
         transaction_cost_bps: float = 10.0,
+        max_gross_exposure: float = 1.0,
+        long_fraction: float = 0.2,
+        short_fraction: float = 0.2,
+        weighting_method: str = "equal",
+        volatility_lookback: int = 21,
+        volatility_floor: float = 0.005,
+        max_position_weight: float = 1.0,
+        rebalance_interval_days: int = 1,
         drawdown_penalty_threshold: float = 0.15,
         drawdown_penalty_scale: float = 4.0,
         action_regularization_scale: float = 0.1,
         reward_scale: float = 10.0,
-        rolling_vol_window: int = 21,
         sharpe_window: int = 63,
         max_drawdown_stop: float = 0.40,
         rebalance_deadband: float = 0.0025,
@@ -64,20 +71,37 @@ class TradingEnvironment(gym.Env):
         self.random_start = random_start
         self.initial_portfolio_value = float(initial_portfolio_value)
         self.transaction_cost_bps = float(transaction_cost_bps)
+        self.max_gross_exposure = float(max_gross_exposure)
+        self.long_fraction = float(long_fraction)
+        self.short_fraction = float(short_fraction)
+        self.weighting_method = str(weighting_method)
+        self.volatility_lookback = max(1, int(volatility_lookback))
+        self.volatility_floor = float(volatility_floor)
+        self.max_position_weight = float(max_position_weight)
+        self.rebalance_interval_days = max(1, int(rebalance_interval_days))
         self.drawdown_penalty_threshold = float(drawdown_penalty_threshold)
         self.drawdown_penalty_scale = float(drawdown_penalty_scale)
         self.action_regularization_scale = float(action_regularization_scale)
         self.reward_scale = float(reward_scale)
-        self.rolling_vol_window = max(1, int(rolling_vol_window))
         self.sharpe_window = max(1, int(sharpe_window))
         self.max_drawdown_stop = float(max_drawdown_stop)
         self.rebalance_deadband = float(rebalance_deadband)
         self.n_regimes = int(self.regime_probs.shape[1])
         self._rng = np.random.default_rng(seed)
 
-        self.signal_weights = self.signal_scores.apply(normalize_signal_scores, axis=1, result_type="expand")
-        self.signal_weights.columns = self.assets
-        self.rolling_vol = self.returns.rolling(self.rolling_vol_window, min_periods=5).std(ddof=0).fillna(0.0)
+        self.backtest_config = BacktestConfig(
+            max_gross_exposure=self.max_gross_exposure,
+            long_fraction=self.long_fraction,
+            short_fraction=self.short_fraction,
+            transaction_cost_bps=self.transaction_cost_bps,
+            rebalance_interval_days=self.rebalance_interval_days,
+            weighting_method=self.weighting_method,
+            volatility_lookback=self.volatility_lookback,
+            volatility_floor=self.volatility_floor,
+            max_position_weight=self.max_position_weight,
+        )
+        self.signal_weights = self._build_static_signal_weights()
+        self.rolling_vol = self.returns.rolling(self.volatility_lookback, min_periods=5).std(ddof=0).fillna(0.0)
         self.vix_series = self._resolve_vix_series(self.regime_features, self.returns.index)
         self._dates = self.returns.index.to_list()
         self._observation_feature_names = tuple(self._build_observation_feature_names())
@@ -293,6 +317,17 @@ class TradingEnvironment(gym.Env):
         if date in self.vix_series.index:
             return float(self.vix_series.loc[date])
         return float(self.vix_series.iloc[-1]) if not self.vix_series.empty else 0.0
+
+    def _build_static_signal_weights(self) -> pd.DataFrame:
+        backtester = AMRFBacktester(
+            returns=self.returns,
+            alpha_signals=self.signal_scores,
+            config=self.backtest_config,
+        )
+        raw_weights = backtester.construct_signal_weights(self.signal_scores.loc[self.returns.index], returns=self.returns)
+        target_weights = backtester.apply_rebalance_schedule(raw_weights)
+        target_weights = target_weights.reindex(index=self.returns.index, columns=self.assets).fillna(0.0)
+        return target_weights.astype(float)
 
     def _build_stats(self) -> ObservationStats:
         portfolio_weights = pd.Series(1.0 / self.n_assets, index=self.assets, dtype=float)
