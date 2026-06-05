@@ -95,13 +95,18 @@ def main() -> None:
     static_artifacts = static_backtester.run(start=config.rl.test_start, end=config.rl.test_end, stress_periods=config.risk.stress_periods)
     static_execution = simulator.simulate(static_artifacts.weights, dataset.returns, dataset.prices)
     static_results = static_execution.daily_results.copy()
-    static_results["portfolio_return"] = static_results["net_return"]
     metrics = PerformanceMetrics()
     benchmark = dataset.returns.loc[rl_results.index, "SPY"].reindex(rl_results.index).fillna(0.0)
+    static_gross = static_artifacts.daily_results["strategy_return_gross"].reindex(rl_results.index).fillna(0.0)
+    static_net = static_results["net_return"].reindex(rl_results.index).fillna(0.0)
+    rl_gross = rl_results["gross_return"].reindex(rl_results.index).fillna(0.0)
+    rl_net = rl_results["net_return"].reindex(rl_results.index).fillna(0.0)
     comparison = pd.DataFrame(
         {
-            "rl_agent": metrics.summarize(rl_results["portfolio_return"]),
-            "static_signal": metrics.summarize(static_results["portfolio_return"].reindex(rl_results.index).fillna(0.0)),
+            "rl_agent_policy": metrics.summarize(rl_gross),
+            "rl_agent_execution": metrics.summarize(rl_net),
+            "static_signal_policy": metrics.summarize(static_gross),
+            "static_signal_execution": metrics.summarize(static_net),
             "SPY": metrics.summarize(benchmark),
         }
     ).T
