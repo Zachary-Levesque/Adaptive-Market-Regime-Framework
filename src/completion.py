@@ -235,11 +235,11 @@ class ProjectCompletionChecker:
         return rows
 
     @staticmethod
-    def _row(check: str, passed: bool, value, detail: str) -> dict[str, object]:
+    def _row(check: str, passed: bool, value, detail: str, required: bool = True) -> dict[str, object]:
         return {
             "check": check,
             "passed": bool(passed),
             "value": str(value),
             "detail": detail,
-            "required": True,
+            "required": bool(required),
         }
