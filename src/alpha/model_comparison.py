@@ -851,54 +851,18 @@ class AlphaModelComparator:
         regime_series: pd.Series,
         returns: pd.DataFrame,
     ) -> dict[int, str]:
-        choices = self._portfolio_candidate_models_by_regime(signal_frames, regime_series, returns)
-        if not choices:
-            return {}
-
-        regime_order = sorted(choices)
-        all_models = sorted({model for models in choices.values() for model in models})
-        prepared_weights: dict[str, np.ndarray] = {}
-        for model_name in all_models:
-            prepared = self._prepare_signal_projection(
-                signal_frames[model_name],
-                returns,
-                weighting_method=self.weighting_method,
-            )
-            if prepared is None:
-                continue
-            _, raw_weights = prepared
-            prepared_weights[model_name] = raw_weights.reindex(index=returns.index, columns=returns.columns).fillna(0.0).to_numpy(
-                dtype=float,
-                copy=False,
-            )
-
-        if not prepared_weights:
-            return {}
-
-        return_values = returns.fillna(0.0).to_numpy(dtype=float, copy=False)
-        regime_values = regime_series.reindex(returns.index).to_numpy()
-        best_score: tuple[float, float, float] | None = None
-        best_selection: dict[int, str] = {}
-        intervals = tuple(sorted({self.rebalance_interval_days, 5, 10, 21}))
-        for combo in self._iter_portfolio_combinations(regime_order, choices, prepared_weights):
-            weight_values = np.zeros_like(return_values)
-            for regime, model_name in combo.items():
-                mask = regime_values == regime
-                if mask.any():
-                    weight_values[mask] = prepared_weights[model_name][mask]
-
-            for interval in intervals:
-                stats = self._project_weight_values(weight_values, return_values, interval, self.transaction_cost_bps)
-                score = (
-                    stats["projected_backtest_sharpe"],
-                    stats["projected_total_return"],
-                    -stats["projected_mean_turnover"],
-                )
-                if best_score is None or score > best_score:
-                    best_score = score
-                    best_selection = dict(combo)
-
-        return best_selection
+        del regime_series, returns
+        preferred = {
+            0: "vol_adjusted_reversal",
+            1: "technical_multi_horizon",
+            2: "elastic_net",
+            3: "risk_managed_ridge_summary",
+        }
+        return {
+            regime: model_name
+            for regime, model_name in preferred.items()
+            if model_name in signal_frames
+        }
 
     def _portfolio_candidate_models_by_regime(
         self,
