@@ -12,6 +12,7 @@ from src.alpha.readiness import load_readiness_status
 from src.config import load_config
 from src.execution.alpaca import AlpacaDataFeed
 from src.execution.intraday import IntradaySignalGenerator
+from src.rl.data import resolve_selected_signal_path
 
 def run_intraday_layer():
     parser = argparse.ArgumentParser(description="Generate intraday trade entry tickets.")
@@ -81,19 +82,5 @@ def run_intraday_layer():
     output_path = Path(config.risk.output_dir) / "intraday_tickets.parquet"
     pd.DataFrame(tickets).to_parquet(output_path)
     logger.info(f"Saved {len(tickets)} tickets to {output_path}")
-
-
-def resolve_selected_signal_path(config) -> Path:
-    selection_path = config.alpha.selection_path
-    if selection_path.exists():
-        selection = pd.read_parquet(selection_path)
-        if not selection.empty and "signal_path" in selection.columns:
-            selected_path = Path(str(selection.iloc[0]["signal_path"]))
-            if selected_path.exists() and selected_path.name != "alpha_signals_rl_tilted.parquet":
-                return selected_path
-
-    return config.alpha.signals_path
-
-
 if __name__ == "__main__":
     run_intraday_layer()
