@@ -25,6 +25,12 @@ def main() -> None:
     model, history = agent.train(total_timesteps=args.timesteps)
     print(f"Saved PPO model to {config.rl.model_path}")
     print(f"Training history rows: {len(history)}")
+    if not history.empty and "validation_sharpe" in history.columns:
+        best_row = history.loc[history["validation_sharpe"].idxmax()]
+        print(
+            "Best validation Sharpe: "
+            f"{float(best_row['validation_sharpe']):.6f} at step {int(best_row['step'])}"
+        )
 
 
 if __name__ == "__main__":
