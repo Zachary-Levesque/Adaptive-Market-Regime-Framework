@@ -34,12 +34,15 @@ def resolve_selected_signal_path(config) -> Path:
         selection = pd.read_parquet(selection_path)
         if not selection.empty and "signal_path" in selection.columns:
             selected_path = Path(str(selection.iloc[0]["signal_path"]))
-            if selected_path.exists():
+            model = str(selection.iloc[0].get("model", "")) if "model" in selection.columns else ""
+            if selected_path.exists() and selected_path.name != "alpha_signals_rl_tilted.parquet" and model != "rl_tilted":
                 return selected_path
 
-    candidate = Path(config.alpha.signals_dir) / "regime_portfolio_selector.parquet"
-    if candidate.exists():
-        return candidate
+    signals_dir = getattr(config.alpha, "signals_dir", None)
+    if signals_dir is not None:
+        candidate = Path(signals_dir) / "regime_portfolio_selector.parquet"
+        if candidate.exists():
+            return candidate
 
     return Path(config.alpha.signals_path)
 

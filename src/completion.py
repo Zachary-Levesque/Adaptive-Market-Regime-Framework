@@ -182,6 +182,8 @@ class ProjectCompletionChecker:
 
     def _rl_rows(self) -> list[dict[str, object]]:
         rows: list[dict[str, object]] = []
+        if not hasattr(self.config, "rl"):
+            return rows
         if self.config.rl.model_path.exists():
             rows.append(self._row("rl_model_saved", True, str(self.config.rl.model_path), "PPO model must be saved."))
         if self.config.rl.backtest_results_path.exists():
