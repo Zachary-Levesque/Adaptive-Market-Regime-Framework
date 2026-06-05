@@ -88,6 +88,27 @@ class RLConfig:
     n_epochs: int
     gamma: float
     initial_capital: float
+    model_path: Path
+    positions_path: Path
+    backtest_results_path: Path
+    comparison_path: Path
+    training_history_path: Path
+    train_start: str
+    train_end: str
+    validation_start: str
+    validation_end: str
+    test_start: str
+    test_end: str
+
+
+@dataclass(frozen=True)
+class ExecutionConfig:
+    max_single_trade_size: float
+    slippage_coefficient: float
+    slippage_floor_bps: float
+    etf_cost_bps: float
+    large_cap_cost_bps: float
+    small_mid_cost_bps: float
 
 
 @dataclass(frozen=True)
@@ -97,6 +118,7 @@ class AppConfig:
     alpha: AlphaConfig
     risk: RiskConfig
     rl: RLConfig
+    execution: ExecutionConfig
 
 
 def load_config(path: str | Path) -> AppConfig:
@@ -114,6 +136,7 @@ def load_config(path: str | Path) -> AppConfig:
     alpha_section = raw.get("alpha", {})
     risk_section = raw.get("risk", {})
     rl_section = raw.get("rl", {})
+    execution_section = raw.get("execution", {})
     lstm_section = alpha_section.get("lstm", {})
     walk_forward_section = alpha_section.get("walk_forward", {})
     regime_names = {
@@ -215,6 +238,31 @@ def load_config(path: str | Path) -> AppConfig:
             n_epochs=int(rl_section.get("n_epochs", 10)),
             gamma=float(rl_section.get("gamma", 0.99)),
             initial_capital=float(rl_section.get("initial_capital", 100000.0)),
+            model_path=Path(rl_section.get("model_path", "models/ppo_position_sizer.zip")),
+            positions_path=Path(rl_section.get("positions_path", "data/processed/rl_positions.parquet")),
+            backtest_results_path=Path(
+                rl_section.get("backtest_results_path", "data/results/rl_backtest_results.parquet")
+            ),
+            comparison_path=Path(
+                rl_section.get("comparison_path", "data/results/rl_vs_baseline_comparison.parquet")
+            ),
+            training_history_path=Path(
+                rl_section.get("training_history_path", "data/results/ppo_training_curves.parquet")
+            ),
+            train_start=str(rl_section.get("train_start", "2007-01-01")),
+            train_end=str(rl_section.get("train_end", "2018-12-31")),
+            validation_start=str(rl_section.get("validation_start", "2019-01-01")),
+            validation_end=str(rl_section.get("validation_end", "2021-12-31")),
+            test_start=str(rl_section.get("test_start", "2022-01-01")),
+            test_end=str(rl_section.get("test_end", "2024-12-31")),
+        ),
+        execution=ExecutionConfig(
+            max_single_trade_size=float(execution_section.get("max_single_trade_size", 0.10)),
+            slippage_coefficient=float(execution_section.get("slippage_coefficient", 0.35)),
+            slippage_floor_bps=float(execution_section.get("slippage_floor_bps", 0.5)),
+            etf_cost_bps=float(execution_section.get("etf_cost_bps", 5.0)),
+            large_cap_cost_bps=float(execution_section.get("large_cap_cost_bps", 12.0)),
+            small_mid_cost_bps=float(execution_section.get("small_mid_cost_bps", 18.0)),
         ),
     )
 
