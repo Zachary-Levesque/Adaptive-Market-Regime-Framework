@@ -80,7 +80,7 @@ class TradingEnvironment(gym.Env):
         self.vix_series = self._resolve_vix_series(self.regime_features, self.returns.index)
         self._stats = stats or self._build_stats()
 
-        obs_dim = self.n_regimes + (self.n_assets * 3) + 4
+        obs_dim = self.n_regimes + (self.n_assets * 3) + 5
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
         self.action_space = spaces.Box(low=0.5, high=1.5, shape=(self.n_assets,), dtype=np.float32)
 
@@ -144,7 +144,7 @@ class TradingEnvironment(gym.Env):
         self._portfolio_return_history.append(portfolio_return)
         self._portfolio_weights = trade_weights
         self._last_trade_weights = trade_weights
-        self._days_since_rebalance = 0 if turnover > self.rebalance_deadband else self._days_since_rebalance + 1
+        # `_apply_rebalance_deadband` already updates the counter.
 
         current_drawdown = self._current_drawdown()
         if self._current_regime_label(next_pos) == self._last_regime:
@@ -203,27 +203,29 @@ class TradingEnvironment(gym.Env):
         vol = self._normalize_row(self.rolling_vol.loc[date], self._stats.vol_mean, self._stats.vol_std)
         portfolio = self._portfolio_weights.reindex(self.assets).fillna(0.0).values.astype(float)
         drawdown = np.array([self._current_drawdown()], dtype=float)
-        days_since_rebalance = np.array([self._days_since_rebalance / max(1, self.episode_length or len(self._dates))], dtype=float)
+        days_since_rebalance = np.array(
+            [self._days_since_rebalance / max(1, self.episode_length or len(self._dates))], dtype=float
+        )
         rolling_sharpe = np.array([self._rolling_sharpe()], dtype=float)
         vix = np.array([(self._vix_value(date) - self._stats.vix_mean) / max(self._stats.vix_std, 1e-6)], dtype=float)
         days_since_regime_change = np.array(
             [self._days_since_regime_change / max(1, self.episode_length or len(self._dates))], dtype=float
         )
 
-        obs = np.concatenate([regime, signal, vol, portfolio, drawdown, days_since_rebalance, rolling_sharpe, vix, days_since_regime_change])
+        obs = np.concatenate(
+            [regime, signal, vol, portfolio, drawdown, days_since_rebalance, rolling_sharpe, vix, days_since_regime_change]
+        )
         return np.nan_to_num(obs, nan=0.0, posinf=10.0, neginf=-10.0).astype(np.float32)
 
     def _action_to_weights(self, action: np.ndarray, date: pd.Timestamp) -> pd.Series:
         action = np.clip(action, self.action_space.low, self.action_space.high)
-        base_weights = self.signal_weights.loc[date].reindex(self.assets).fillna(1.0 / self.n_assets).astype(float)
-        base_weights = base_weights / max(float(base_weights.sum()), 1e-12)
+        base_weights = self.signal_weights.loc[date].reindex(self.assets).fillna(0.0).astype(float)
         scaled = base_weights.values * action
-        scaled = np.maximum(scaled, 1e-8)
-        total = float(np.sum(scaled))
-        if total <= 0.0 or not np.isfinite(total):
+        gross = float(np.abs(scaled).sum())
+        if gross <= 0.0 or not np.isfinite(gross):
             weights = np.full(self.n_assets, 1.0 / self.n_assets, dtype=float)
         else:
-            weights = scaled / total
+            weights = scaled / gross
         return pd.Series(weights, index=self.assets, dtype=float)
 
     def _apply_rebalance_deadband(self, target_weights: pd.Series) -> pd.Series:
