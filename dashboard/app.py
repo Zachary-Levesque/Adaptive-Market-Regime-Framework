@@ -91,8 +91,26 @@ def readiness_status(readiness_report: pd.DataFrame) -> tuple[str, str]:
     passed = int(readiness_report["passed"].astype(bool).sum()) if "passed" in readiness_report.columns else 0
     total = int(len(readiness_report))
     status = "Ready" if ready else "Blocked"
-    detail = f"{passed}/{total} checks"
+    detail = f"{passed}/{total} checks passed"
     return status, detail
+
+
+def hover_text(label: str, help_text: str) -> str:
+    return (
+        f'<span title="{help_text}" style="cursor: help; border-bottom: 1px dotted #777;">'
+        f"{label}</span>"
+    )
+
+
+def metric_block(
+    column,
+    label: str,
+    value,
+    help_text: str,
+    delta: str | None = None,
+) -> None:
+    column.markdown(f"<div style='font-size:0.9rem'>{hover_text(label, help_text)}</div>", unsafe_allow_html=True)
+    column.metric("", value, delta)
 
 
 def build_regime_area_chart(regime_probs: pd.DataFrame) -> go.Figure:
@@ -180,22 +198,71 @@ def overview_page(data: dict[str, pd.DataFrame | Path]) -> None:
     spy_row = performance.loc["SPY"] if not performance.empty and "SPY" in performance.index else pd.Series(dtype=float)
     excess_sharpe = float(strategy_row.get("sharpe", 0.0)) - float(spy_row.get("sharpe", 0.0))
 
+    st.markdown("### Snapshot")
     metric_cols = st.columns(5)
-    metric_cols[0].metric("Current Regime", current_regime, f"{regime_prob:.1%}")
-    metric_cols[1].metric("Selected Model", selected_model)
-    metric_cols[2].metric("Data Through", latest_date)
-    metric_cols[3].metric("RL Readiness", status, status_detail)
-    metric_cols[4].metric("Sharpe vs SPY", f"{excess_sharpe:+.2f}")
+    metric_block(
+        metric_cols[0],
+        "Current Regime",
+        current_regime,
+        "The latest HMM regime with the highest probability. This is the model’s current market-state estimate.",
+        f"{regime_prob:.1%}",
+    )
+    metric_block(
+        metric_cols[1],
+        "Selected Model",
+        selected_model,
+        "The alpha signal chosen by the model-comparison and selection pipeline. This is the signal the backtest uses.",
+    )
+    metric_block(
+        metric_cols[2],
+        "Data Through",
+        latest_date,
+        "The latest date available in the saved artifacts powering the dashboard. The app is reading parquet files, not live quotes.",
+    )
+    metric_block(
+        metric_cols[3],
+        "RL Readiness",
+        status,
+        "Whether the selected signal clears the pre-RL quality gate. Blocked means one or more advisory checks failed.",
+        status_detail,
+    )
+    metric_block(
+        metric_cols[4],
+        "Sharpe vs SPY",
+        f"{excess_sharpe:+.2f}",
+        "Strategy Sharpe minus SPY Sharpe. Positive means the selected strategy is beating SPY on risk-adjusted return.",
+    )
 
     if not performance.empty and "strategy" in performance.index:
+        st.markdown("### Performance")
         perf_cols = st.columns(4)
-        perf_cols[0].metric("Strategy Sharpe", f"{float(strategy_row.get('sharpe', 0.0)):.2f}")
-        perf_cols[1].metric("SPY Sharpe", f"{float(spy_row.get('sharpe', 0.0)):.2f}")
-        perf_cols[2].metric("Strategy Total Return", f"{float(strategy_row.get('total_return', 0.0)):.2f}")
-        perf_cols[3].metric("Max Drawdown", f"{abs(float(strategy_row.get('max_drawdown', 0.0))):.2%}")
+        metric_block(
+            perf_cols[0],
+            "Strategy Sharpe",
+            f"{float(strategy_row.get('sharpe', 0.0)):.2f}",
+            "Annualized risk-adjusted return for the selected strategy.",
+        )
+        metric_block(
+            perf_cols[1],
+            "SPY Sharpe",
+            f"{float(spy_row.get('sharpe', 0.0)):.2f}",
+            "Annualized risk-adjusted return for the benchmark ETF.",
+        )
+        metric_block(
+            perf_cols[2],
+            "Strategy Total Return",
+            f"{float(strategy_row.get('total_return', 0.0)):.2f}",
+            "Total compounded return for the selected strategy over the backtest window.",
+        )
+        metric_block(
+            perf_cols[3],
+            "Max Drawdown",
+            f"{abs(float(strategy_row.get('max_drawdown', 0.0))):.2%}",
+            "Largest peak-to-trough decline in the selected strategy’s equity curve.",
+        )
 
     if not model_summary.empty:
-        st.subheader("Selected Alpha Candidates")
+        st.markdown(f"### {hover_text('Selected Alpha Candidates', 'The highest-ranked alpha models from the comparison stage.')} ", unsafe_allow_html=True)
         visible = [c for c in ["mean_sharpe", "mean_rank_ic", "projected_backtest_sharpe", "projected_total_return"] if c in model_summary.columns]
         if visible:
             st.dataframe(model_summary[visible].head(8).round(4), use_container_width=True)
@@ -203,7 +270,10 @@ def overview_page(data: dict[str, pd.DataFrame | Path]) -> None:
     if not readiness.empty and "passed" in readiness.columns:
         failed = readiness.loc[~readiness["passed"].astype(bool)]
         if not failed.empty:
-            st.subheader("Current Blockers")
+            st.markdown(
+                f"### {hover_text('Current Blockers', 'The checks currently preventing RL deployment or signaling where the chosen strategy is weak.')}",
+                unsafe_allow_html=True,
+            )
             st.dataframe(failed[["check", "value", "detail"]], use_container_width=True)
 
 
