@@ -96,16 +96,14 @@ def split_by_date(frame: pd.DataFrame, start: str | pd.Timestamp, end: str | pd.
 
 
 def normalize_signal_scores(signal_row: pd.Series, temperature: float = 1.0) -> pd.Series:
-    """Convert a score vector to long-only portfolio weights."""
+    """Convert a score vector to signed gross-normalized portfolio weights."""
     clean = pd.to_numeric(signal_row, errors="coerce").fillna(0.0).astype(float)
     clean = clean.replace([np.inf, -np.inf], 0.0)
     scaled = clean / max(1e-8, float(temperature))
-    shifted = scaled - scaled.max()
-    weights = np.exp(np.clip(shifted, -50.0, 50.0))
-    total = float(weights.sum())
-    if total <= 0.0 or not np.isfinite(total):
+    gross = float(np.abs(scaled).sum())
+    if gross <= 0.0 or not np.isfinite(gross):
         return pd.Series(1.0 / len(clean), index=clean.index, dtype=float)
-    return pd.Series(weights / total, index=clean.index, dtype=float)
+    return pd.Series(scaled / gross, index=clean.index, dtype=float)
 
 
 def safe_forward_fill(frame: pd.DataFrame) -> pd.DataFrame:
