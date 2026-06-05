@@ -72,7 +72,7 @@ def run_daily():
     # (Simplified for the prototype runner)
     
     # 5. Apply RL Tilts
-    rl_model_path = Path("models/rl_ppo_agent")
+    rl_model_path = Path("models/ppo_position_sizer.zip")
     if rl_model_path.exists() or (rl_model_path.with_suffix(".zip")).exists():
         logger.info("Applying RL position sizing tilts...")
         rl_model = PPO.load(rl_model_path)
