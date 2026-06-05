@@ -31,17 +31,19 @@ def load_dashboard_data() -> dict[str, pd.DataFrame | Path]:
     data = {
         "config": config,
         "selected_signal_path": selected_signal_path,
+        "selection_manifest": load_frame(str(config.alpha.selection_path)),
         "regime_probs": load_frame(str(config.regime.output_dir / "regime_probs.parquet")),
         "transition_matrix": load_frame(str(config.regime.output_dir / "transition_matrix.parquet")),
         "rl_positions": load_frame(str(config.rl.positions_path)),
         "rl_backtest": load_frame(str(config.rl.backtest_results_path)),
         "rl_comparison": load_frame(str(config.rl.comparison_path)),
-        "static_backtest": load_frame(str(config.risk.output_dir / "backtest_results.parquet")),
+        "strategy_backtest": load_frame(str(config.risk.output_dir / "backtest_results.parquet")),
         "performance_report": load_frame(str(config.risk.output_dir / "performance_report.parquet")),
         "regime_performance": load_frame(str(config.risk.output_dir / "regime_performance.parquet")),
         "alpha_diag": load_frame(str(config.alpha.diagnostics_path)),
         "alpha_diag_regime": load_frame(str(config.alpha.diagnostics_path.with_name("alpha_diagnostics_by_regime.parquet"))),
         "alpha_model_summary": load_frame(str(config.alpha.comparison_path.with_name("alpha_model_comparison_summary.parquet"))),
+        "readiness_report": load_frame(str(config.alpha.diagnostics_path.with_name("alpha_readiness_report.parquet"))),
         "selected_signal": load_frame(str(selected_signal_path)),
         "static_signal": load_frame(str(config.alpha.signals_dir / "regime_portfolio_selector.parquet")),
     }
@@ -54,6 +56,43 @@ def current_regime_block(regime_probs: pd.DataFrame) -> tuple[str, float, pd.Ser
     latest = regime_probs.iloc[-1].fillna(0.0)
     regime = latest.idxmax()
     return str(regime), float(latest.max()), latest
+
+
+def latest_index_date(*frames: pd.DataFrame) -> str:
+    latest: pd.Timestamp | None = None
+    for frame in frames:
+        if frame.empty:
+            continue
+        idx = pd.to_datetime(pd.Index(frame.index), errors="coerce")
+        idx = idx[~idx.isna()]
+        if idx.empty:
+            continue
+        candidate = idx.max()
+        if latest is None or candidate > latest:
+            latest = candidate
+    return latest.date().isoformat() if latest is not None else "Unavailable"
+
+
+def selected_model_name(selection_manifest: pd.DataFrame) -> str:
+    if selection_manifest.empty:
+        return "Unavailable"
+    row = selection_manifest.iloc[0]
+    model = str(row.get("model", "")).strip()
+    if model:
+        return model
+    signal_path = str(row.get("signal_path", "")).strip()
+    return Path(signal_path).stem if signal_path else "Unavailable"
+
+
+def readiness_status(readiness_report: pd.DataFrame) -> tuple[str, str]:
+    if readiness_report.empty or "ready_for_rl" not in readiness_report.columns:
+        return "Unavailable", "No readiness report"
+    ready = bool(readiness_report["ready_for_rl"].all())
+    passed = int(readiness_report["passed"].astype(bool).sum()) if "passed" in readiness_report.columns else 0
+    total = int(len(readiness_report))
+    status = "Ready" if ready else "Blocked"
+    detail = f"{passed}/{total} checks"
+    return status, detail
 
 
 def build_regime_area_chart(regime_probs: pd.DataFrame) -> go.Figure:
@@ -75,7 +114,7 @@ def build_regime_area_chart(regime_probs: pd.DataFrame) -> go.Figure:
                 name=column,
                 mode="lines",
                 line={"color": colors.get(column, None), "width": 1.5},
-                fill="tozeroy" if i == 0 else "tonexty",
+                stackgroup="regimes",
                 opacity=0.8,
             )
         )
@@ -101,10 +140,11 @@ def build_transition_heatmap(matrix: pd.DataFrame) -> go.Figure:
 
 
 def build_drawdown_gauge(drawdown: float) -> go.Figure:
+    drawdown_pct = abs(float(drawdown)) * 100.0
     fig = go.Figure(
         go.Indicator(
             mode="gauge+number",
-            value=drawdown * 100.0,
+            value=drawdown_pct,
             number={"suffix": "%"},
             gauge={
                 "axis": {"range": [0, 100]},
@@ -119,6 +159,52 @@ def build_drawdown_gauge(drawdown: float) -> go.Figure:
     )
     fig.update_layout(title="Current Drawdown", height=260)
     return fig
+
+
+def overview_page(data: dict[str, pd.DataFrame | Path]) -> None:
+    regime_probs = data["regime_probs"]
+    performance = data["performance_report"]
+    readiness = data["readiness_report"]
+    selection = data["selection_manifest"]
+    selected_signal = data["selected_signal"]
+    rl_backtest = data["rl_backtest"]
+    strategy_backtest = data["strategy_backtest"]
+    model_summary = data["alpha_model_summary"]
+
+    current_regime, regime_prob, _ = current_regime_block(regime_probs)
+    selected_model = selected_model_name(selection)
+    status, status_detail = readiness_status(readiness)
+    latest_date = latest_index_date(regime_probs, selected_signal, strategy_backtest, rl_backtest)
+
+    strategy_row = performance.loc["strategy"] if not performance.empty and "strategy" in performance.index else pd.Series(dtype=float)
+    spy_row = performance.loc["SPY"] if not performance.empty and "SPY" in performance.index else pd.Series(dtype=float)
+    excess_sharpe = float(strategy_row.get("sharpe", 0.0)) - float(spy_row.get("sharpe", 0.0))
+
+    metric_cols = st.columns(5)
+    metric_cols[0].metric("Current Regime", current_regime, f"{regime_prob:.1%}")
+    metric_cols[1].metric("Selected Model", selected_model)
+    metric_cols[2].metric("Data Through", latest_date)
+    metric_cols[3].metric("RL Readiness", status, status_detail)
+    metric_cols[4].metric("Sharpe vs SPY", f"{excess_sharpe:+.2f}")
+
+    if not performance.empty and "strategy" in performance.index:
+        perf_cols = st.columns(4)
+        perf_cols[0].metric("Strategy Sharpe", f"{float(strategy_row.get('sharpe', 0.0)):.2f}")
+        perf_cols[1].metric("SPY Sharpe", f"{float(spy_row.get('sharpe', 0.0)):.2f}")
+        perf_cols[2].metric("Strategy Total Return", f"{float(strategy_row.get('total_return', 0.0)):.2f}")
+        perf_cols[3].metric("Max Drawdown", f"{abs(float(strategy_row.get('max_drawdown', 0.0))):.2%}")
+
+    if not model_summary.empty:
+        st.subheader("Selected Alpha Candidates")
+        visible = [c for c in ["mean_sharpe", "mean_rank_ic", "projected_backtest_sharpe", "projected_total_return"] if c in model_summary.columns]
+        if visible:
+            st.dataframe(model_summary[visible].head(8).round(4), use_container_width=True)
+
+    if not readiness.empty and "passed" in readiness.columns:
+        failed = readiness.loc[~readiness["passed"].astype(bool)]
+        if not failed.empty:
+            st.subheader("Current Blockers")
+            st.dataframe(failed[["check", "value", "detail"]], use_container_width=True)
 
 
 def portfolio_page(data: dict[str, pd.DataFrame | Path]) -> None:
@@ -140,10 +226,10 @@ def portfolio_page(data: dict[str, pd.DataFrame | Path]) -> None:
 
     col1, col2 = st.columns(2)
     with col1:
-        st.subheader("Current Signal Weights")
+        st.subheader("Selected Strategy Weights")
         st.dataframe(latest_signal.sort_values(ascending=False).to_frame("weight"), use_container_width=True)
     with col2:
-        st.subheader("Current RL Weights")
+        st.subheader("RL Weights")
         st.dataframe(latest_rl.sort_values(ascending=False).to_frame("weight"), use_container_width=True)
 
     history = pd.concat(
@@ -176,19 +262,19 @@ def portfolio_page(data: dict[str, pd.DataFrame | Path]) -> None:
 
 def backtest_page(data: dict[str, pd.DataFrame | Path]) -> None:
     rl_backtest = data["rl_backtest"]
-    static_backtest = data["static_backtest"]
+    strategy_backtest = data["strategy_backtest"]
     perf = data["performance_report"]
     comparison = data["rl_comparison"]
 
     curves = []
     if not rl_backtest.empty:
         curves.append(rl_backtest[["portfolio_value"]].rename(columns={"portfolio_value": "RL Agent"}))
-    if not static_backtest.empty and "equity" in static_backtest.columns:
-        curves.append(static_backtest[["equity"]].rename(columns={"equity": "Static Signal"}))
-    if not static_backtest.empty and "benchmark_equity" in static_backtest.columns:
-        curves.append(static_backtest[["benchmark_equity"]].rename(columns={"benchmark_equity": "SPY"}))
-    if not static_backtest.empty and "equal_weight_equity" in static_backtest.columns:
-        curves.append(static_backtest[["equal_weight_equity"]].rename(columns={"equal_weight_equity": "Equal Weight"}))
+    if not strategy_backtest.empty and "equity" in strategy_backtest.columns:
+        curves.append(strategy_backtest[["equity"]].rename(columns={"equity": "Selected Strategy"}))
+    if not strategy_backtest.empty and "benchmark_equity" in strategy_backtest.columns:
+        curves.append(strategy_backtest[["benchmark_equity"]].rename(columns={"benchmark_equity": "SPY"}))
+    if not strategy_backtest.empty and "equal_weight_equity" in strategy_backtest.columns:
+        curves.append(strategy_backtest[["equal_weight_equity"]].rename(columns={"equal_weight_equity": "Equal Weight"}))
 
     if curves:
         equity = pd.concat(curves, axis=1)
@@ -218,7 +304,8 @@ def diagnostics_page(data: dict[str, pd.DataFrame | Path]) -> None:
     diag = data["alpha_diag"]
     diag_regime = data["alpha_diag_regime"]
     model_summary = data["alpha_model_summary"]
-    static_backtest = data["static_backtest"]
+    strategy_backtest = data["strategy_backtest"]
+    readiness = data["readiness_report"]
 
     if not diag.empty and "ic" in diag.columns:
         fig = go.Figure()
@@ -254,17 +341,22 @@ def diagnostics_page(data: dict[str, pd.DataFrame | Path]) -> None:
             fig.update_layout(title="Signal vs Benchmark Sharpe", height=350)
             st.plotly_chart(fig, use_container_width=True)
 
-    if not static_backtest.empty and {"benchmark_return", "strategy_return"}.issubset(static_backtest.columns):
+    if not strategy_backtest.empty and {"benchmark_return", "strategy_return"}.issubset(strategy_backtest.columns):
         fig = go.Figure(
             data=go.Scatter(
-                x=static_backtest["benchmark_return"],
-                y=static_backtest["strategy_return"],
+                x=strategy_backtest["benchmark_return"],
+                y=strategy_backtest["strategy_return"],
                 mode="markers",
                 opacity=0.5,
             )
         )
         fig.update_layout(title="Daily Signal vs Benchmark Scatter", height=350)
         st.plotly_chart(fig, use_container_width=True)
+
+    if not readiness.empty:
+        st.subheader("Readiness Report")
+        cols = [c for c in ["check", "passed", "value", "detail"] if c in readiness.columns]
+        st.dataframe(readiness[cols], use_container_width=True)
 
 
 def regime_page(data: dict[str, pd.DataFrame | Path]) -> None:
@@ -287,11 +379,13 @@ def main() -> None:
 
     page = st.sidebar.radio(
         "Page",
-        ["Regime Monitor", "Portfolio", "Backtest Results", "Alpha Diagnostics"],
+        ["Overview", "Regime Monitor", "Portfolio", "Backtest Results", "Alpha Diagnostics"],
         index=0,
     )
 
-    if page == "Regime Monitor":
+    if page == "Overview":
+        overview_page(data)
+    elif page == "Regime Monitor":
         regime_page(data)
     elif page == "Portfolio":
         portfolio_page(data)
