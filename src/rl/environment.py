@@ -15,12 +15,9 @@ from src.rl.data import normalize_signal_scores
 
 @dataclass(frozen=True)
 class ObservationStats:
-    signal_mean: pd.Series
-    signal_std: pd.Series
-    vol_mean: pd.Series
-    vol_std: pd.Series
-    vix_mean: float
-    vix_std: float
+    feature_names: tuple[str, ...]
+    mean: np.ndarray
+    std: np.ndarray
 
 
 class TradingEnvironment(gym.Env):
@@ -45,6 +42,7 @@ class TradingEnvironment(gym.Env):
         transaction_cost_bps: float = 10.0,
         drawdown_penalty_threshold: float = 0.15,
         drawdown_penalty_scale: float = 4.0,
+        action_regularization_scale: float = 0.1,
         rolling_vol_window: int = 21,
         sharpe_window: int = 63,
         max_drawdown_stop: float = 0.40,
@@ -67,6 +65,7 @@ class TradingEnvironment(gym.Env):
         self.transaction_cost_bps = float(transaction_cost_bps)
         self.drawdown_penalty_threshold = float(drawdown_penalty_threshold)
         self.drawdown_penalty_scale = float(drawdown_penalty_scale)
+        self.action_regularization_scale = float(action_regularization_scale)
         self.rolling_vol_window = max(1, int(rolling_vol_window))
         self.sharpe_window = max(1, int(sharpe_window))
         self.max_drawdown_stop = float(max_drawdown_stop)
@@ -78,11 +77,12 @@ class TradingEnvironment(gym.Env):
         self.signal_weights.columns = self.assets
         self.rolling_vol = self.returns.rolling(self.rolling_vol_window, min_periods=5).std(ddof=0).fillna(0.0)
         self.vix_series = self._resolve_vix_series(self.regime_features, self.returns.index)
+        self._observation_feature_names = tuple(self._build_observation_feature_names())
         self._stats = stats or self._build_stats()
 
-        obs_dim = self.n_regimes + (self.n_assets * 3) + 5
+        obs_dim = len(self._observation_feature_names)
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
-        self.action_space = spaces.Box(low=0.0, high=1.5, shape=(self.n_assets,), dtype=np.float32)
+        self.action_space = spaces.Box(low=0.5, high=1.5, shape=(self.n_assets,), dtype=np.float32)
 
         self._dates = self.returns.index.to_list()
         self._start_pos = 0
@@ -124,6 +124,7 @@ class TradingEnvironment(gym.Env):
             raise ValueError(f"Expected action shape {(self.n_assets,)}, got {action.shape}.")
 
         current_date = self._dates[self._position]
+        baseline_weights = self._baseline_weights(current_date)
         target_weights = self._action_to_weights(action, current_date)
         turnover = float(np.abs(target_weights - self._portfolio_weights).sum())
         trade_weights = self._apply_rebalance_deadband(target_weights)
@@ -136,7 +137,6 @@ class TradingEnvironment(gym.Env):
 
         next_returns = self.returns.iloc[next_pos].fillna(0.0)
         gross_return = float((trade_weights * next_returns).sum())
-        baseline_weights = self.signal_weights.iloc[self._position].reindex(self.assets).fillna(0.0)
         baseline_return = float((baseline_weights * next_returns).sum())
         transaction_cost = turnover * (self.transaction_cost_bps / 10_000.0)
         portfolio_return = gross_return - transaction_cost
@@ -160,7 +160,16 @@ class TradingEnvironment(gym.Env):
         risk_adjusted_return = portfolio_return
         baseline_risk_adjusted = baseline_return
         drawdown_penalty = max(0.0, current_drawdown - self.drawdown_penalty_threshold) * self.drawdown_penalty_scale
-        reward = risk_adjusted_return + 0.5 * (risk_adjusted_return - baseline_risk_adjusted) - drawdown_penalty
+        action_penalty = self.action_regularization_scale * float(
+            np.mean(np.square(target_weights.values - baseline_weights.values))
+        )
+        reward = (
+            risk_adjusted_return
+            + 0.5 * (risk_adjusted_return - baseline_risk_adjusted)
+            - drawdown_penalty
+            - action_penalty
+        )
+        reward = float(np.clip(reward, -1.0, 1.0))
 
         terminated = next_pos >= self._episode_end
         truncated = bool(current_drawdown >= self.max_drawdown_stop)
@@ -175,10 +184,11 @@ class TradingEnvironment(gym.Env):
             "drawdown": current_drawdown,
             "rolling_vol": rolling_vol,
             "risk_adjusted_return": risk_adjusted_return,
+            "action_penalty": action_penalty,
             "prev_portfolio_value": prev_value,
             "target_turnover": turnover,
         }
-        return observation, float(reward), terminated, truncated, info
+        return observation, reward, terminated, truncated, info
 
     def render(self):  # pragma: no cover - no interactive render path
         return None
