@@ -65,16 +65,20 @@ def main() -> None:
     rl_execution = simulator.simulate(rollout.positions, dataset.returns, dataset.prices)
     rl_results = rl_execution.daily_results.copy()
     rl_positions = rl_execution.executed_weights.copy()
+    regime_labels = pd.DataFrame(
+        {"regime": dataset.regime_probs.idxmax(axis=1).map({name: idx for idx, name in enumerate(dataset.regime_probs.columns)})}
+    )
     rl_results["portfolio_return"] = rl_results["net_return"]
     rl_results["equity"] = rl_results["portfolio_value"]
     rl_results["benchmark_return"] = dataset.returns.loc[rl_results.index, "SPY"].reindex(rl_results.index).fillna(0.0)
     rl_results["equal_weight_return"] = dataset.returns.loc[rl_results.index].mean(axis=1)
+    rl_results["regime"] = regime_labels.loc[rl_results.index, "regime"].reindex(rl_results.index).astype(float)
 
     static_signal = dataset.selected_signal.loc[config.rl.test_start : config.rl.test_end]
     static_backtester = AMRFBacktester(
         returns=split_by_date(dataset.returns, config.rl.test_start, config.rl.test_end),
         alpha_signals=static_signal,
-        regime_labels=split_by_date(dataset.regime_probs, config.rl.test_start, config.rl.test_end),
+        regime_labels=split_by_date(regime_labels, config.rl.test_start, config.rl.test_end),
         config=BacktestConfig(
             transaction_cost_bps=config.risk.transaction_cost_bps,
             benchmark=config.data.benchmark,
