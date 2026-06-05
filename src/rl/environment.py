@@ -160,7 +160,7 @@ class TradingEnvironment(gym.Env):
         risk_adjusted_return = portfolio_return
         baseline_risk_adjusted = baseline_return
         drawdown_penalty = max(0.0, current_drawdown - self.drawdown_penalty_threshold) * self.drawdown_penalty_scale
-        reward = risk_adjusted_return + 0.5 * (risk_adjusted_return - baseline_risk_adjusted) - drawdown_penalty - transaction_cost
+        reward = risk_adjusted_return + 0.5 * (risk_adjusted_return - baseline_risk_adjusted) - drawdown_penalty
 
         terminated = next_pos >= self._episode_end
         truncated = bool(current_drawdown >= self.max_drawdown_stop)
