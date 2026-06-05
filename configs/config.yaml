@@ -76,7 +76,7 @@ rl:
   test_end: "2024-12-31"
 
 execution:
-  max_single_trade_size: 0.10
+  max_single_trade_size: 0.25
   slippage_coefficient: 0.35
   slippage_floor_bps: 0.5
   etf_cost_bps: 5.0
