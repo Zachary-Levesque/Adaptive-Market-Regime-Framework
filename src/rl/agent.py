@@ -167,6 +167,7 @@ class PPOPositionSizingAgent:
             name_prefix="ppo_position_sizer",
         )
         best_model_path = self.config.rl.model_path.parent / "best_validation_model.zip"
+        best_model_path.unlink(missing_ok=True)
         validation_callback = ValidationSharpeCallback(
             train_eval_env,
             best_model_path=best_model_path,
