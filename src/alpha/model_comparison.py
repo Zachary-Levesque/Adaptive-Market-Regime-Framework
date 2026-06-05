@@ -137,10 +137,12 @@ class AlphaModelComparator:
         fold_metrics = pd.concat(fold_frames, ignore_index=True) if fold_frames else pd.DataFrame()
         signal_frames = self._with_regime_selector_signal(signal_frames, fold_metrics, regime_series)
         signal_frames = self._with_defensive_regime_selector_signal(signal_frames, regime_series, returns)
+        signal_frames = self._with_regime_rank_ic_selector_signal(signal_frames, regime_series, returns)
         signal_frames = self._with_risk_managed_signals(signal_frames, returns)
         leaderboard = self._summarize(fold_metrics)
         leaderboard = self._with_regime_selector_candidate(leaderboard, fold_metrics)
         leaderboard = self._with_defensive_regime_selector_candidate(leaderboard, signal_frames, regime_series, returns)
+        leaderboard = self._with_regime_rank_ic_selector_candidate(leaderboard, signal_frames, regime_series, returns)
         leaderboard = self._with_risk_managed_candidates(leaderboard, signal_frames, returns)
         leaderboard = self._with_cash_candidate(leaderboard)
         leaderboard = self._attach_signal_stats(leaderboard, signal_frames)
@@ -634,6 +636,148 @@ class AlphaModelComparator:
         combined = defensive if leaderboard.empty else pd.concat([leaderboard, defensive], sort=False)
         return combined.sort_values(["mean_net_sharpe", "mean_sharpe", "mean_ic"], ascending=False)
 
+    def _with_regime_rank_ic_selector_signal(
+        self,
+        signal_frames: dict[str, pd.DataFrame],
+        regime_series: pd.Series,
+        returns: pd.DataFrame,
+    ) -> dict[str, pd.DataFrame]:
+        selections = self._select_rank_ic_models_by_regime(signal_frames, regime_series, returns)
+        if not selections:
+            return signal_frames
+
+        template = next(iter(signal_frames.values()))
+        composite = pd.DataFrame(np.nan, index=template.index, columns=template.columns, dtype=float)
+        aligned_regimes = regime_series.reindex(composite.index)
+        for regime, model_name in selections.items():
+            if model_name not in signal_frames:
+                continue
+            mask = aligned_regimes.eq(regime).fillna(False)
+            composite.loc[mask] = signal_frames[model_name].loc[mask]
+
+        enriched = dict(signal_frames)
+        enriched["regime_rank_ic_selector"] = composite
+        return enriched
+
+    def _with_regime_rank_ic_selector_candidate(
+        self,
+        leaderboard: pd.DataFrame,
+        signal_frames: dict[str, pd.DataFrame],
+        regime_series: pd.Series,
+        returns: pd.DataFrame,
+    ) -> pd.DataFrame:
+        if "regime_rank_ic_selector" not in signal_frames:
+            return leaderboard
+
+        selections = self._select_rank_ic_models_by_regime(signal_frames, regime_series, returns)
+        if not selections:
+            return leaderboard
+
+        stats = self._project_signal_backtest(signal_frames["regime_rank_ic_selector"], returns)
+        regime_scores = self._rank_ic_scores_by_regime(signal_frames, regime_series, returns)
+        selected_scores = regime_scores[
+            regime_scores.apply(
+                lambda row: selections.get(int(row["regime"])) == str(row["model"]),
+                axis=1,
+            )
+        ]
+        row = {
+            "n_rows": 0,
+            "n_folds": 0,
+            "n_regimes": len(selections),
+            "mean_sharpe": stats["projected_backtest_sharpe"],
+            "median_sharpe": stats["projected_backtest_sharpe"],
+            "mean_net_sharpe": stats["projected_backtest_sharpe"],
+            "mean_ic": float(selected_scores["mean_ic"].mean()) if not selected_scores.empty else 0.0,
+            "mean_rank_ic": float(selected_scores["mean_rank_ic"].mean()) if not selected_scores.empty else 0.0,
+            "mean_hit_rate": float(selected_scores["ic_positive_rate"].mean()) if not selected_scores.empty else 0.0,
+            "mean_turnover": stats["projected_mean_turnover"],
+            "mean_transaction_cost": stats["projected_mean_turnover"] * (self.transaction_cost_bps / 10_000.0),
+            "mean_train_size": 0.0,
+            "mean_test_size": 0.0,
+            "selected_regime_models": ", ".join(
+                f"{int(regime)}:{model_name}" for regime, model_name in sorted(selections.items())
+            ),
+        }
+        selector = pd.DataFrame([row], index=pd.Index(["regime_rank_ic_selector"], name="model"))
+        combined = selector if leaderboard.empty else pd.concat([leaderboard, selector], sort=False)
+        return combined.sort_values(["mean_net_sharpe", "mean_sharpe", "mean_ic"], ascending=False)
+
+    def _select_rank_ic_models_by_regime(
+        self,
+        signal_frames: dict[str, pd.DataFrame],
+        regime_series: pd.Series,
+        returns: pd.DataFrame,
+    ) -> dict[int, str]:
+        scores = self._rank_ic_scores_by_regime(signal_frames, regime_series, returns)
+        if scores.empty:
+            return {}
+
+        selections: dict[int, str] = {}
+        for regime, group in scores.groupby("regime"):
+            eligible = group[group["n_days"].ge(self.min_selection_active_days // 4)]
+            if eligible.empty:
+                eligible = group
+            positive = eligible[eligible["mean_rank_ic"].gt(0.0)]
+            ranked = positive if not positive.empty else eligible
+            ranked = ranked.sort_values(
+                ["mean_rank_ic", "ic_positive_rate", "mean_ic", "n_days"],
+                ascending=[False, False, False, False],
+            )
+            if not ranked.empty:
+                selections[int(regime)] = str(ranked.iloc[0]["model"])
+        return selections
+
+    def _rank_ic_scores_by_regime(
+        self,
+        signal_frames: dict[str, pd.DataFrame],
+        regime_series: pd.Series,
+        returns: pd.DataFrame,
+    ) -> pd.DataFrame:
+        base_models = [
+            model_name
+            for model_name in signal_frames
+            if model_name
+            not in {
+                "cash",
+                "regime_selector",
+                "defensive_regime_selector",
+                "regime_rank_ic_selector",
+            }
+            and not model_name.startswith("risk_managed_")
+        ]
+        if not base_models:
+            return pd.DataFrame()
+
+        forward_returns = self._forward_return_frame(returns, horizon=self.alpha_config.target_horizon)
+        aligned_regimes = regime_series.reindex(forward_returns.index)
+        rows: list[dict[str, float | int | str]] = []
+        for model_name in base_models:
+            signals = signal_frames[model_name].reindex(index=forward_returns.index, columns=forward_returns.columns)
+            active = signals.notna().any(axis=1)
+            if not active.any():
+                continue
+
+            daily_ic = self._rowwise_correlation(signals, forward_returns)
+            daily_rank_ic = self._rowwise_correlation(signals.rank(axis=1), forward_returns.rank(axis=1))
+            for regime in sorted(int(value) for value in aligned_regimes.dropna().unique()):
+                mask = active & aligned_regimes.eq(regime)
+                if not mask.any():
+                    continue
+                regime_ic = daily_ic.loc[mask]
+                rows.append(
+                    {
+                        "model": model_name,
+                        "regime": regime,
+                        "n_days": int(mask.sum()),
+                        "mean_ic": float(regime_ic.mean()),
+                        "mean_rank_ic": float(daily_rank_ic.loc[mask].mean()),
+                        "ic_positive_rate": float((regime_ic > 0.0).mean()),
+                    }
+                )
+
+        return pd.DataFrame(rows)
+
     def _select_projected_models_by_regime(
         self,
         signal_frames: dict[str, pd.DataFrame],
@@ -914,6 +1058,37 @@ class AlphaModelComparator:
         if std == 0.0:
             return 0.0
         return float(np.sqrt(252.0) * series.mean() / std)
+
+    @staticmethod
+    def _forward_return_frame(returns: pd.DataFrame, horizon: int) -> pd.DataFrame:
+        horizon = max(1, int(horizon))
+        forward = pd.DataFrame(0.0, index=returns.index, columns=returns.columns)
+        valid_counts = pd.DataFrame(0, index=returns.index, columns=returns.columns)
+        for offset in range(1, horizon + 1):
+            shifted = returns.shift(-offset)
+            forward = forward.add(shifted, fill_value=0.0)
+            valid_counts = valid_counts.add(shifted.notna().astype(int), fill_value=0)
+        return forward.where(valid_counts.eq(horizon))
+
+    @staticmethod
+    def _rowwise_correlation(left: pd.DataFrame, right: pd.DataFrame, min_assets: int = 3) -> pd.Series:
+        common_index = left.index.intersection(right.index)
+        common_columns = left.columns.intersection(right.columns)
+        if common_index.empty or common_columns.empty:
+            return pd.Series(dtype=float)
+
+        left_aligned = left.loc[common_index, common_columns].astype(float)
+        right_aligned = right.loc[common_index, common_columns].astype(float)
+        valid = left_aligned.notna() & right_aligned.notna()
+        counts = valid.sum(axis=1)
+        safe_counts = counts.replace(0, np.nan)
+
+        left_centered = left_aligned.where(valid).sub(left_aligned.where(valid).sum(axis=1).div(safe_counts), axis=0)
+        right_centered = right_aligned.where(valid).sub(right_aligned.where(valid).sum(axis=1).div(safe_counts), axis=0)
+        numerator = left_centered.mul(right_centered).sum(axis=1)
+        denominator = np.sqrt(left_centered.pow(2).sum(axis=1).mul(right_centered.pow(2).sum(axis=1)))
+        correlations = numerator.div(denominator).replace([np.inf, -np.inf], np.nan)
+        return correlations.where(counts.ge(min_assets), 0.0).fillna(0.0)
 
     def _attach_projected_backtest_stats(
         self,
