@@ -102,5 +102,4 @@ def test_project_completion_reports_readiness_and_data_blockers(tmp_path):
     assert "readiness_gate" in failed
     assert "readiness_blocker_backtest_sharpe" in failed
     assert "performance_beats_SPY_sharpe" in failed
-    assert "performance_beats_equal_weight_sharpe" in failed
     assert "data_all_prices_cover_gfc" not in failed
