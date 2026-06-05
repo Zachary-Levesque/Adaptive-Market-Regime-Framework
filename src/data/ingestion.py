@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from io import StringIO
 import os
@@ -83,6 +84,23 @@ class MarketDataIngester:
             interval,
             require_full_start_coverage=self.allow_remote_downloads,
         )
+        local_frames, missing_tickers = self._load_local_price_frames(requested_tickers, start, end)
+        if local_frames and not missing_tickers:
+            local_prices = pd.concat(local_frames, axis=1).sort_index(axis=1)
+            local_prices.index = pd.to_datetime(local_prices.index).tz_localize(None)
+            current_end_window = pd.Timestamp(end) >= pd.Timestamp(date.today()) - pd.Timedelta(days=5)
+            local_covers_range = self._frame_covers_range(local_prices, start, end)
+            local_is_current = (
+                current_end_window
+                and not local_prices.empty
+                and pd.to_datetime(local_prices.index).tz_localize(None).min() <= pd.Timestamp(start)
+                and pd.to_datetime(local_prices.index).tz_localize(None).max() >= pd.Timestamp(end) - pd.Timedelta(days=5)
+            )
+            if local_covers_range or local_is_current:
+                logger.info("Loaded local price history for {} tickers", len(local_prices.columns.levels[0]))
+                self._save_cached_prices(local_prices, requested_tickers, start, end, interval)
+                return local_prices
+
         if cached is not None and not force_refresh and self._cache_covers_range(cached, start, end):
             logger.info("Loaded cached price history for {} tickers", len(cached.columns.levels[0]))
             return cached
@@ -135,7 +153,6 @@ class MarketDataIngester:
                 f"Local raw-data directory: {self.local_data_dir or 'not configured'}. {local_hint}"
             )
 
-        local_frames, missing_tickers = self._load_local_price_frames(requested_tickers, start, end)
         if local_frames and not missing_tickers and not force_refresh:
             prices = pd.concat(local_frames, axis=1).sort_index(axis=1)
             prices.index = pd.to_datetime(prices.index).tz_localize(None)
