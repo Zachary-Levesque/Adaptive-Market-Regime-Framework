@@ -43,6 +43,7 @@ class TradingEnvironment(gym.Env):
         drawdown_penalty_threshold: float = 0.15,
         drawdown_penalty_scale: float = 4.0,
         action_regularization_scale: float = 0.1,
+        reward_scale: float = 10.0,
         rolling_vol_window: int = 21,
         sharpe_window: int = 63,
         max_drawdown_stop: float = 0.40,
@@ -66,6 +67,7 @@ class TradingEnvironment(gym.Env):
         self.drawdown_penalty_threshold = float(drawdown_penalty_threshold)
         self.drawdown_penalty_scale = float(drawdown_penalty_scale)
         self.action_regularization_scale = float(action_regularization_scale)
+        self.reward_scale = float(reward_scale)
         self.rolling_vol_window = max(1, int(rolling_vol_window))
         self.sharpe_window = max(1, int(sharpe_window))
         self.max_drawdown_stop = float(max_drawdown_stop)
@@ -77,6 +79,7 @@ class TradingEnvironment(gym.Env):
         self.signal_weights.columns = self.assets
         self.rolling_vol = self.returns.rolling(self.rolling_vol_window, min_periods=5).std(ddof=0).fillna(0.0)
         self.vix_series = self._resolve_vix_series(self.regime_features, self.returns.index)
+        self._dates = self.returns.index.to_list()
         self._observation_feature_names = tuple(self._build_observation_feature_names())
         self._stats = stats or self._build_stats()
 
@@ -84,7 +87,6 @@ class TradingEnvironment(gym.Env):
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
         self.action_space = spaces.Box(low=0.5, high=1.5, shape=(self.n_assets,), dtype=np.float32)
 
-        self._dates = self.returns.index.to_list()
         self._start_pos = 0
         self._end_pos = len(self._dates) - 1
         self._episode_start = 0
@@ -164,8 +166,7 @@ class TradingEnvironment(gym.Env):
             np.mean(np.square(target_weights.values - baseline_weights.values))
         )
         reward = (
-            risk_adjusted_return
-            + 0.5 * (risk_adjusted_return - baseline_risk_adjusted)
+            self.reward_scale * (risk_adjusted_return + 0.5 * (risk_adjusted_return - baseline_risk_adjusted))
             - drawdown_penalty
             - action_penalty
         )
@@ -210,36 +211,24 @@ class TradingEnvironment(gym.Env):
         if position >= len(self._dates):
             return np.zeros(self.observation_space.shape, dtype=np.float32)
 
-        date = self._dates[position]
-        regime = self._current_regime_one_hot(position)
-        signal = self._normalize_row(self.signal_scores.loc[date], self._stats.signal_mean, self._stats.signal_std)
-        vol = self._normalize_row(self.rolling_vol.loc[date], self._stats.vol_mean, self._stats.vol_std)
-        portfolio = self._portfolio_weights.reindex(self.assets).fillna(0.0).values.astype(float)
-        drawdown = np.array([self._current_drawdown()], dtype=float)
-        days_since_rebalance = np.array(
-            [self._days_since_rebalance / max(1, self.episode_length or len(self._dates))], dtype=float
-        )
-        rolling_sharpe = np.array([self._rolling_sharpe()], dtype=float)
-        vix = np.array([(self._vix_value(date) - self._stats.vix_mean) / max(self._stats.vix_std, 1e-6)], dtype=float)
-        days_since_regime_change = np.array(
-            [self._days_since_regime_change / max(1, self.episode_length or len(self._dates))], dtype=float
-        )
-
-        obs = np.concatenate(
-            [regime, signal, vol, portfolio, drawdown, days_since_rebalance, rolling_sharpe, vix, days_since_regime_change]
-        )
+        raw = self._raw_observation(position)
+        if raw.shape[0] != self._stats.mean.shape[0]:
+            raise ValueError(
+                f"Observation stats dimension mismatch: expected {raw.shape[0]}, got {self._stats.mean.shape[0]}"
+            )
+        obs = (raw - self._stats.mean) / np.where(self._stats.std == 0.0, 1.0, self._stats.std)
         return np.nan_to_num(obs, nan=0.0, posinf=10.0, neginf=-10.0).astype(np.float32)
 
     def _action_to_weights(self, action: np.ndarray, date: pd.Timestamp) -> pd.Series:
         action = np.clip(action, self.action_space.low, self.action_space.high)
-        base_weights = self.signal_weights.loc[date].reindex(self.assets).fillna(0.0).astype(float)
+        base_weights = self._baseline_weights(date)
         scaled = base_weights.values * action
         gross = float(np.abs(scaled).sum())
-        exposure = float(np.clip(np.mean(action), 0.0, 1.5))
-        if gross <= 0.0 or not np.isfinite(gross):
-            weights = np.full(self.n_assets, exposure / self.n_assets, dtype=float)
+        base_gross = float(np.abs(base_weights.values).sum())
+        if gross <= 0.0 or not np.isfinite(gross) or base_gross <= 0.0 or not np.isfinite(base_gross):
+            weights = base_weights.values.astype(float)
         else:
-            weights = scaled / gross * exposure
+            weights = scaled / gross * base_gross
         return pd.Series(weights, index=self.assets, dtype=float)
 
     def _apply_rebalance_deadband(self, target_weights: pd.Series) -> pd.Series:
@@ -269,12 +258,26 @@ class TradingEnvironment(gym.Env):
         return float(np.sqrt(252.0) * window.mean() / vol)
 
     def _current_drawdown(self) -> float:
-        if not self._portfolio_return_history:
+        return self._drawdown_from_history(self._portfolio_return_history)
+
+    @staticmethod
+    def _drawdown_from_history(history: list[float]) -> float:
+        if not history:
             return 0.0
-        equity = np.cumprod(1.0 + np.asarray(self._portfolio_return_history, dtype=float))
+        equity = np.cumprod(1.0 + np.asarray(history, dtype=float))
         peak = np.maximum.accumulate(equity)
         drawdown = 1.0 - equity[-1] / max(peak[-1], 1e-12)
         return float(max(0.0, drawdown))
+
+    def _rolling_sharpe_from_history(self, history: list[float]) -> float:
+        series = pd.Series(history, dtype=float)
+        if series.size < 2:
+            return 0.0
+        window = series.tail(self.sharpe_window)
+        vol = float(window.std(ddof=0))
+        if vol <= 0.0:
+            return 0.0
+        return float(np.sqrt(252.0) * window.mean() / vol)
 
     def _current_regime_label(self, position: int) -> int:
         probs = self.regime_probs.iloc[position].fillna(0.0).to_numpy(dtype=float)
@@ -292,27 +295,110 @@ class TradingEnvironment(gym.Env):
         return float(self.vix_series.iloc[-1]) if not self.vix_series.empty else 0.0
 
     def _build_stats(self) -> ObservationStats:
-        signal = self.signal_scores.loc[self.returns.index]
-        vol = self.rolling_vol.loc[self.returns.index]
-        vix = self.vix_series.reindex(self.returns.index).ffill().bfill()
-        signal_mean = signal.mean(axis=0).fillna(0.0)
-        signal_std = signal.std(axis=0, ddof=0).replace(0.0, 1.0).fillna(1.0)
-        vol_mean = vol.mean(axis=0).fillna(0.0)
-        vol_std = vol.std(axis=0, ddof=0).replace(0.0, 1.0).fillna(1.0)
-        return ObservationStats(
-            signal_mean=signal_mean,
-            signal_std=signal_std,
-            vol_mean=vol_mean,
-            vol_std=vol_std,
-            vix_mean=float(vix.mean()),
-            vix_std=float(vix.std(ddof=0) or 1.0),
+        portfolio_weights = pd.Series(1.0 / self.n_assets, index=self.assets, dtype=float)
+        portfolio_value = self.initial_portfolio_value
+        portfolio_history: list[float] = []
+        days_since_rebalance = 0
+        days_since_regime_change = 0
+        last_regime = self._current_regime_label(0) if self._dates else 0
+        rows: list[np.ndarray] = []
+
+        for position, date in enumerate(self._dates):
+            rows.append(
+                self._raw_observation(
+                    position,
+                    portfolio_weights=portfolio_weights,
+                    portfolio_value=portfolio_value,
+                    portfolio_history=portfolio_history,
+                    days_since_rebalance=days_since_rebalance,
+                    days_since_regime_change=days_since_regime_change,
+                )
+            )
+            if position >= len(self._dates) - 1:
+                break
+
+            baseline = self._baseline_weights(date)
+            turnover = float(np.abs(baseline - portfolio_weights).sum())
+            if turnover <= self.rebalance_deadband:
+                executed = portfolio_weights.copy()
+                days_since_rebalance += 1
+            else:
+                executed = baseline.copy()
+                days_since_rebalance = 0
+
+            next_returns = self.returns.iloc[position + 1].fillna(0.0)
+            portfolio_return = float((executed * next_returns).sum() - turnover * (self.transaction_cost_bps / 10_000.0))
+            portfolio_value *= 1.0 + portfolio_return
+            portfolio_history.append(portfolio_return)
+
+            next_regime = self._current_regime_label(position + 1)
+            if next_regime == last_regime:
+                days_since_regime_change += 1
+            else:
+                days_since_regime_change = 0
+                last_regime = next_regime
+            portfolio_weights = executed
+
+        frame = pd.DataFrame(rows, columns=self._observation_feature_names)
+        mean = frame.mean(axis=0).to_numpy(dtype=float)
+        std = frame.std(axis=0, ddof=0).replace(0.0, 1.0).to_numpy(dtype=float)
+        return ObservationStats(feature_names=self._observation_feature_names, mean=mean, std=std)
+
+    def _raw_observation(
+        self,
+        position: int,
+        *,
+        portfolio_weights: pd.Series | None = None,
+        portfolio_value: float | None = None,
+        portfolio_history: list[float] | None = None,
+        days_since_rebalance: int | None = None,
+        days_since_regime_change: int | None = None,
+    ) -> np.ndarray:
+        if position >= len(self._dates):
+            return np.zeros(len(self._observation_feature_names), dtype=float)
+
+        date = self._dates[position]
+        portfolio_weights = (
+            portfolio_weights.reindex(self.assets).fillna(0.0).astype(float)
+            if portfolio_weights is not None
+            else self._portfolio_weights.reindex(self.assets).fillna(0.0).astype(float)
+        )
+        _ = float(portfolio_value if portfolio_value is not None else self._portfolio_value)
+        portfolio_history = list(portfolio_history if portfolio_history is not None else self._portfolio_return_history)
+        days_since_rebalance = int(days_since_rebalance if days_since_rebalance is not None else self._days_since_rebalance)
+        days_since_regime_change = int(
+            days_since_regime_change if days_since_regime_change is not None else self._days_since_regime_change
         )
 
-    @staticmethod
-    def _normalize_row(row: pd.Series, mean: pd.Series, std: pd.Series) -> np.ndarray:
-        aligned = pd.to_numeric(row, errors="coerce").reindex(mean.index).fillna(0.0).astype(float)
-        centered = (aligned - mean).divide(std.replace(0.0, 1.0))
-        return centered.replace([np.inf, -np.inf], 0.0).to_numpy(dtype=float)
+        return np.concatenate(
+            [
+                self._current_regime_one_hot(position),
+                self._baseline_weights(date).values.astype(float),
+                self.rolling_vol.loc[date].reindex(self.assets).fillna(0.0).astype(float).values,
+                portfolio_weights.values.astype(float),
+                np.array([self._drawdown_from_history(portfolio_history)], dtype=float),
+                np.array([float(days_since_rebalance)], dtype=float),
+                np.array([self._rolling_sharpe_from_history(portfolio_history)], dtype=float),
+                np.array([self._vix_value(date)], dtype=float),
+                np.array([float(days_since_regime_change)], dtype=float),
+            ]
+        )
+
+    def _baseline_weights(self, date: pd.Timestamp) -> pd.Series:
+        base_weights = self.signal_weights.loc[date].reindex(self.assets).fillna(0.0).astype(float)
+        gross = float(np.abs(base_weights.values).sum())
+        if gross <= 0.0 or not np.isfinite(gross):
+            return pd.Series(1.0 / self.n_assets, index=self.assets, dtype=float)
+        return base_weights
+
+    def _build_observation_feature_names(self) -> list[str]:
+        return (
+            [f"regime_{idx}" for idx in range(self.n_regimes)]
+            + [f"signal_{asset}" for asset in self.assets]
+            + [f"vol_{asset}" for asset in self.assets]
+            + [f"portfolio_{asset}" for asset in self.assets]
+            + ["drawdown", "days_since_rebalance", "rolling_sharpe", "vix", "days_since_regime_change"]
+        )
 
     @staticmethod
     def _align_frame(frame: pd.DataFrame, start: str | pd.Timestamp, end: str | pd.Timestamp) -> pd.DataFrame:
