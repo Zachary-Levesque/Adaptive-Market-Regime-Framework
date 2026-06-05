@@ -179,7 +179,7 @@ class FeatureEngineer:
             if "M2" in macro.columns:
                 regime_features["m2_growth_yoy"] = macro["M2"].pct_change(52).reindex(close.index).ffill()
 
-        return regime_features.dropna(how="all")
+        return self._impute_regime_features(regime_features).dropna(how="all")
 
     @staticmethod
     def _extract_field(prices: pd.DataFrame, fields: Iterable[str]) -> pd.DataFrame:
@@ -243,6 +243,21 @@ class FeatureEngineer:
 
         ratio = close[high_yield_proxy] / close[investment_grade_proxy]
         return np.log(ratio)
+
+    @staticmethod
+    def _impute_regime_features(features: pd.DataFrame) -> pd.DataFrame:
+        """Fill provider gaps so unavailable macro fields do not erase valid price history."""
+        imputed = features.replace([np.inf, -np.inf], np.nan).copy()
+        for column in imputed.columns:
+            series = pd.to_numeric(imputed[column], errors="coerce")
+            expanding_median = series.expanding(min_periods=1).median()
+            series = series.fillna(expanding_median)
+            if series.isna().any():
+                series = series.fillna(series.median())
+            if series.isna().any():
+                series = series.fillna(0.0)
+            imputed[column] = series
+        return imputed
 
     @staticmethod
     def _frac_diff_ffd(series: pd.DataFrame, d: float, threshold: float = 1e-4) -> pd.DataFrame:
