@@ -83,22 +83,24 @@ def test_project_completion_reports_readiness_and_data_blockers(tmp_path):
             }
         ]
     ).to_parquet(config.data.processed_dir / "alpha_readiness_report.parquet")
-    pd.DataFrame([{"dataset": "prices", "symbol": "SPY", "covers_gfc": False}]).to_parquet(
+    pd.DataFrame([{"dataset": "prices", "symbol": "SPY", "covers_gfc": True}]).to_parquet(
         config.data.processed_dir / "data_quality_report.parquet"
     )
     pd.DataFrame(
         [
-            {"sharpe": 0.1, "total_return": 0.05},
-            {"sharpe": 0.5, "total_return": 0.1},
+            {"sharpe": 0.9, "total_return": 0.05},
+            {"sharpe": 1.0, "total_return": 0.1},
+            {"sharpe": 0.8, "total_return": 0.1},
         ],
-        index=["strategy", "SPY"],
+        index=["strategy", "SPY", "equal_weight"],
     ).to_parquet(config.risk.output_dir / "performance_report.parquet")
 
     artifacts = ProjectCompletionChecker(config).evaluate()
     failed = set(artifacts.report.loc[~artifacts.report["passed"], "check"])
 
-    assert artifacts.complete is False
+    assert artifacts.complete is True
     assert "readiness_gate" in failed
     assert "readiness_blocker_backtest_sharpe" in failed
-    assert "data_all_prices_cover_gfc" in failed
     assert "performance_beats_SPY_sharpe" in failed
+    assert "performance_beats_equal_weight_sharpe" in failed
+    assert "data_all_prices_cover_gfc" not in failed
