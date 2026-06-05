@@ -798,6 +798,7 @@ class AlphaModelComparator:
                 continue
             mask = aligned_regimes.eq(regime).fillna(False)
             composite.loc[mask] = signal_frames[model_name].loc[mask]
+        composite = self._with_warm_start_signals(composite, regime_series, returns)
 
         enriched = dict(signal_frames)
         enriched["regime_portfolio_selector"] = composite
@@ -853,16 +854,53 @@ class AlphaModelComparator:
     ) -> dict[int, str]:
         del regime_series, returns
         preferred = {
-            0: "vol_adjusted_reversal",
+            0: "technical_multi_horizon",
             1: "technical_multi_horizon",
-            2: "elastic_net",
-            3: "risk_managed_ridge_summary",
+            2: "technical_multi_horizon",
+            3: "defensive_regime_selector",
         }
         return {
             regime: model_name
             for regime, model_name in preferred.items()
             if model_name in signal_frames
         }
+
+    @staticmethod
+    def _with_warm_start_signals(
+        signals: pd.DataFrame,
+        regime_series: pd.Series,
+        returns: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """Fill the pre-walk-forward period with trailing-only technical scores."""
+        momentum_63d = (1.0 + returns).rolling(63, min_periods=21).apply(np.prod, raw=True) - 1.0
+        momentum_21d = (1.0 + returns).rolling(21, min_periods=10).apply(np.prod, raw=True) - 1.0
+        volatility_21d = returns.rolling(21, min_periods=10).std(ddof=0)
+
+        def cross_sectional_zscore(frame: pd.DataFrame) -> pd.DataFrame:
+            mean = frame.mean(axis=1)
+            std = frame.std(axis=1, ddof=0).replace(0.0, np.nan)
+            return frame.sub(mean, axis=0).div(std, axis=0)
+
+        warm = (
+            0.7 * cross_sectional_zscore(momentum_63d)
+            + 0.3 * cross_sectional_zscore(momentum_21d)
+            - 0.2 * cross_sectional_zscore(volatility_21d)
+        )
+        defensive_preference = pd.Series(0.0, index=warm.columns)
+        for ticker, score in {"TLT": 1.0, "GLD": 0.8, "LQD": 0.4, "HYG": 0.1}.items():
+            if ticker in defensive_preference.index:
+                defensive_preference.loc[ticker] = score
+
+        aligned_regimes = regime_series.reindex(warm.index)
+        defensive_mask = aligned_regimes.isin([2, 3]).fillna(False)
+        warm.loc[defensive_mask] = warm.loc[defensive_mask].add(defensive_preference, axis=1)
+
+        filled = signals.copy()
+        inactive = ~filled.notna().any(axis=1)
+        warm_active = warm.notna().any(axis=1)
+        fill_mask = inactive & warm_active.reindex(filled.index).fillna(False)
+        filled.loc[fill_mask] = warm.reindex(index=filled.index, columns=filled.columns).loc[fill_mask]
+        return filled
 
     def _portfolio_candidate_models_by_regime(
         self,
