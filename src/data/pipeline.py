@@ -66,7 +66,7 @@ class DataPipeline:
         logger.info("Building Phase 1 datasets for {} tickers", len(self.config.universe))
 
         price_universe = [ticker for ticker in self.config.universe if ticker not in {"^VIX", "VIX"}]
-        self.ingester.force_refresh_prices = bool(self.config.allow_remote_downloads)
+        self.ingester.force_refresh_prices = False
 
         prices = self.ingester.download_prices(
             tickers=price_universe,
