@@ -139,10 +139,12 @@ class AlphaModelComparator:
         signal_frames = self._with_defensive_regime_selector_signal(signal_frames, regime_series, returns)
         signal_frames = self._with_regime_rank_ic_selector_signal(signal_frames, regime_series, returns)
         signal_frames = self._with_risk_managed_signals(signal_frames, returns)
+        signal_frames = self._with_regime_portfolio_selector_signal(signal_frames, regime_series, returns)
         leaderboard = self._summarize(fold_metrics)
         leaderboard = self._with_regime_selector_candidate(leaderboard, fold_metrics)
         leaderboard = self._with_defensive_regime_selector_candidate(leaderboard, signal_frames, regime_series, returns)
         leaderboard = self._with_regime_rank_ic_selector_candidate(leaderboard, signal_frames, regime_series, returns)
+        leaderboard = self._with_regime_portfolio_selector_candidate(leaderboard, signal_frames, regime_series, returns)
         leaderboard = self._with_risk_managed_candidates(leaderboard, signal_frames, returns)
         leaderboard = self._with_cash_candidate(leaderboard)
         leaderboard = self._attach_signal_stats(leaderboard, signal_frames)
@@ -778,6 +780,199 @@ class AlphaModelComparator:
 
         return pd.DataFrame(rows)
 
+    def _with_regime_portfolio_selector_signal(
+        self,
+        signal_frames: dict[str, pd.DataFrame],
+        regime_series: pd.Series,
+        returns: pd.DataFrame,
+    ) -> dict[str, pd.DataFrame]:
+        selections = self._select_portfolio_models_by_regime(signal_frames, regime_series, returns)
+        if not selections:
+            return signal_frames
+
+        template = next(iter(signal_frames.values()))
+        composite = pd.DataFrame(np.nan, index=template.index, columns=template.columns, dtype=float)
+        aligned_regimes = regime_series.reindex(composite.index)
+        for regime, model_name in selections.items():
+            if model_name not in signal_frames:
+                continue
+            mask = aligned_regimes.eq(regime).fillna(False)
+            composite.loc[mask] = signal_frames[model_name].loc[mask]
+
+        enriched = dict(signal_frames)
+        enriched["regime_portfolio_selector"] = composite
+        return enriched
+
+    def _with_regime_portfolio_selector_candidate(
+        self,
+        leaderboard: pd.DataFrame,
+        signal_frames: dict[str, pd.DataFrame],
+        regime_series: pd.Series,
+        returns: pd.DataFrame,
+    ) -> pd.DataFrame:
+        if "regime_portfolio_selector" not in signal_frames:
+            return leaderboard
+
+        selections = self._select_portfolio_models_by_regime(signal_frames, regime_series, returns)
+        if not selections:
+            return leaderboard
+
+        stats = self._project_signal_backtest(signal_frames["regime_portfolio_selector"], returns)
+        row = {
+            "n_rows": 0,
+            "n_folds": 0,
+            "n_regimes": len(selections),
+            "mean_sharpe": stats["projected_backtest_sharpe"],
+            "median_sharpe": stats["projected_backtest_sharpe"],
+            "mean_net_sharpe": stats["projected_backtest_sharpe"],
+            "mean_ic": 0.0,
+            "mean_rank_ic": 0.0,
+            "mean_hit_rate": 0.0,
+            "mean_turnover": stats["projected_mean_turnover"],
+            "mean_transaction_cost": stats["projected_mean_turnover"] * (self.transaction_cost_bps / 10_000.0),
+            "mean_train_size": 0.0,
+            "mean_test_size": 0.0,
+            "selected_regime_models": ", ".join(
+                f"{int(regime)}:{model_name}" for regime, model_name in sorted(selections.items())
+            ),
+        }
+        selector = pd.DataFrame([row], index=pd.Index(["regime_portfolio_selector"], name="model"))
+        combined = selector if leaderboard.empty else pd.concat([leaderboard, selector], sort=False)
+        return combined.sort_values(["mean_net_sharpe", "mean_sharpe", "mean_ic"], ascending=False)
+
+    def _select_portfolio_models_by_regime(
+        self,
+        signal_frames: dict[str, pd.DataFrame],
+        regime_series: pd.Series,
+        returns: pd.DataFrame,
+    ) -> dict[int, str]:
+        choices = self._portfolio_candidate_models_by_regime(signal_frames, regime_series, returns)
+        if not choices:
+            return {}
+
+        regime_order = sorted(choices)
+        all_models = sorted({model for models in choices.values() for model in models})
+        prepared_weights: dict[str, np.ndarray] = {}
+        for model_name in all_models:
+            prepared = self._prepare_signal_projection(
+                signal_frames[model_name],
+                returns,
+                weighting_method=self.weighting_method,
+            )
+            if prepared is None:
+                continue
+            _, raw_weights = prepared
+            prepared_weights[model_name] = raw_weights.reindex(index=returns.index, columns=returns.columns).fillna(0.0).to_numpy(
+                dtype=float,
+                copy=False,
+            )
+
+        if not prepared_weights:
+            return {}
+
+        return_values = returns.fillna(0.0).to_numpy(dtype=float, copy=False)
+        regime_values = regime_series.reindex(returns.index).to_numpy()
+        best_score: tuple[float, float, float] | None = None
+        best_selection: dict[int, str] = {}
+        intervals = tuple(sorted({self.rebalance_interval_days, 5, 10, 21}))
+        for combo in self._iter_portfolio_combinations(regime_order, choices, prepared_weights):
+            weight_values = np.zeros_like(return_values)
+            for regime, model_name in combo.items():
+                mask = regime_values == regime
+                if mask.any():
+                    weight_values[mask] = prepared_weights[model_name][mask]
+
+            for interval in intervals:
+                stats = self._project_weight_values(weight_values, return_values, interval, self.transaction_cost_bps)
+                score = (
+                    stats["projected_backtest_sharpe"],
+                    stats["projected_total_return"],
+                    -stats["projected_mean_turnover"],
+                )
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best_selection = dict(combo)
+
+        return best_selection
+
+    def _portfolio_candidate_models_by_regime(
+        self,
+        signal_frames: dict[str, pd.DataFrame],
+        regime_series: pd.Series,
+        returns: pd.DataFrame,
+        max_models_per_regime: int = 6,
+    ) -> dict[int, list[str]]:
+        excluded = {
+            "cash",
+            "regime_selector",
+            "defensive_regime_selector",
+            "regime_rank_ic_selector",
+            "regime_portfolio_selector",
+            "risk_managed_regime_selector",
+            "risk_managed_defensive_regime_selector",
+            "risk_managed_regime_rank_ic_selector",
+        }
+        base_models = [model_name for model_name in signal_frames if model_name not in excluded]
+        if not base_models:
+            return {}
+
+        aligned_regimes = regime_series.reindex(returns.index)
+        rank_ic_scores = self._rank_ic_scores_by_regime(signal_frames, regime_series, returns)
+        choices: dict[int, list[str]] = {}
+        for regime in sorted(int(value) for value in aligned_regimes.dropna().unique()):
+            regime_dates = aligned_regimes[aligned_regimes.eq(regime)].index
+            rows = []
+            for model_name in base_models:
+                stats = self._project_signal_backtest(
+                    signal_frames[model_name].reindex(regime_dates),
+                    returns.reindex(regime_dates),
+                )
+                if stats["projected_backtest_sharpe"] <= 0.0 or stats["projected_total_return"] <= 0.0:
+                    continue
+                rows.append(
+                    {
+                        "model": model_name,
+                        "projected_backtest_sharpe": stats["projected_backtest_sharpe"],
+                        "projected_total_return": stats["projected_total_return"],
+                        "projected_mean_turnover": stats["projected_mean_turnover"],
+                    }
+                )
+
+            selected: list[str] = []
+            if rows:
+                projected = pd.DataFrame(rows).sort_values(
+                    ["projected_backtest_sharpe", "projected_total_return", "projected_mean_turnover"],
+                    ascending=[False, False, True],
+                )
+                selected.extend(str(model_name) for model_name in projected["model"].head(max_models_per_regime))
+
+            if not rank_ic_scores.empty:
+                ic_ranked = rank_ic_scores[rank_ic_scores["regime"].eq(regime)].sort_values(
+                    ["mean_rank_ic", "ic_positive_rate", "mean_ic"],
+                    ascending=[False, False, False],
+                )
+                for model_name in ic_ranked["model"].head(3):
+                    if str(model_name) in base_models and str(model_name) not in selected:
+                        selected.append(str(model_name))
+
+            choices[regime] = selected[:max_models_per_regime]
+
+        return {regime: models for regime, models in choices.items() if models}
+
+    @staticmethod
+    def _iter_portfolio_combinations(
+        regime_order: list[int],
+        choices: dict[int, list[str]],
+        prepared_weights: dict[str, np.ndarray],
+    ):
+        import itertools
+
+        model_choices = [[model for model in choices[regime] if model in prepared_weights] for regime in regime_order]
+        if not model_choices or any(not models for models in model_choices):
+            return
+        for combo in itertools.product(*model_choices):
+            yield dict(zip(regime_order, combo))
+
     def _select_projected_models_by_regime(
         self,
         signal_frames: dict[str, pd.DataFrame],
@@ -1203,6 +1398,51 @@ class AlphaModelComparator:
         return {
             "projected_backtest_sharpe": self._annualized_sharpe(strategy_returns.tolist()),
             "projected_total_return": float((1.0 + strategy_returns).prod() - 1.0),
+            "projected_mean_turnover": float(turnover.mean()) if len(turnover) else 0.0,
+        }
+
+    @staticmethod
+    def _project_weight_values(
+        raw_weights: np.ndarray,
+        returns: np.ndarray,
+        rebalance_interval_days: int,
+        transaction_cost_bps: float,
+    ) -> dict[str, float]:
+        if raw_weights.size == 0 or returns.size == 0:
+            return {
+                "projected_backtest_sharpe": 0.0,
+                "projected_total_return": 0.0,
+                "projected_mean_turnover": 0.0,
+            }
+
+        interval = max(1, int(rebalance_interval_days))
+        target_weights = np.zeros_like(raw_weights)
+        current = np.zeros(raw_weights.shape[1], dtype=float)
+        last_rebalance_pos: int | None = None
+        for pos in range(raw_weights.shape[0]):
+            has_signal = bool(np.abs(raw_weights[pos]).sum() > 0.0)
+            has_flat_target = not has_signal and last_rebalance_pos is not None
+            should_rebalance = has_flat_target or (
+                has_signal and (last_rebalance_pos is None or pos - last_rebalance_pos >= interval)
+            )
+            if should_rebalance:
+                current = raw_weights[pos].copy()
+                last_rebalance_pos = pos
+            target_weights[pos] = current
+
+        applied_weights = np.vstack([np.zeros((1, target_weights.shape[1])), target_weights[:-1]])
+        gross_returns = np.sum(applied_weights * returns, axis=1)
+        turnover = np.empty(applied_weights.shape[0], dtype=float)
+        turnover[0] = np.abs(applied_weights[0]).sum()
+        if len(turnover) > 1:
+            turnover[1:] = np.abs(np.diff(applied_weights, axis=0)).sum(axis=1)
+        transaction_cost = turnover * (float(transaction_cost_bps) / 10_000.0)
+        strategy_returns = gross_returns - transaction_cost
+        std = float(strategy_returns.std())
+        sharpe = float(np.sqrt(252.0) * strategy_returns.mean() / std) if std > 0.0 else 0.0
+        return {
+            "projected_backtest_sharpe": sharpe,
+            "projected_total_return": float(np.prod(1.0 + strategy_returns) - 1.0),
             "projected_mean_turnover": float(turnover.mean()) if len(turnover) else 0.0,
         }
 
