@@ -62,11 +62,14 @@ class ExecutionSimulator:
         clipped = delta.clip(lower=-self.max_single_trade_size, upper=self.max_single_trade_size)
         executed = current + clipped
 
+        target_gross = float(np.abs(target).sum())
         gross = float(np.abs(executed).sum())
-        if gross <= 0.0 or not np.isfinite(gross):
-            executed = pd.Series(1.0 / len(executed), index=executed.index, dtype=float)
+        if target_gross <= 0.0 or not np.isfinite(target_gross):
+            executed = pd.Series(0.0, index=executed.index, dtype=float)
+        elif gross <= 0.0 or not np.isfinite(gross):
+            executed = pd.Series(target_gross / len(executed), index=executed.index, dtype=float)
         else:
-            executed = executed / gross
+            executed = executed / gross * max(target_gross, 1e-12)
         return executed.astype(float)
 
     def simulate(
