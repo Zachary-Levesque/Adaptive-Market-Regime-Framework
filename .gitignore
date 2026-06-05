@@ -5,6 +5,7 @@
 __pycache__/
 *.py[cod]
 data/raw/
+d_us_txt.zip
 
 # AMRF Generated Data and Models
 data/processed/
