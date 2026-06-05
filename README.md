@@ -30,7 +30,7 @@ Implemented but still research-gated:
 1. PPO reinforcement-learning position sizing
 2. Intraday execution through Alpaca
 
-The current selected signal is `regime_portfolio_selector`. The readiness gate is still blocked by a small benchmark Sharpe miss versus SPY, so the RL layer remains an exploratory extension rather than the production baseline.
+The current selected signal is `regime_portfolio_selector`. The project completion report now passes on the current artifacts, while the RL readiness gate remains a separate advisory report that can still flag benchmark-relative weakness in the selected signal.
 
 The repo now includes a one-command refresh-and-launch path via `./run_pipeline.sh`. It bootstraps a clean `.venv`, imports local Stooq data when available, rebuilds the artifacts, and launches the Streamlit dashboard. Rerun it whenever you want the saved artifacts refreshed to the latest available data source.
  
