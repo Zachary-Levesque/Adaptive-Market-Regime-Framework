@@ -801,6 +801,7 @@ class AlphaModelComparator:
 
         enriched = dict(signal_frames)
         enriched["regime_portfolio_selector"] = composite
+        self._last_portfolio_selection = selections
         return enriched
 
     def _with_regime_portfolio_selector_candidate(
@@ -813,7 +814,11 @@ class AlphaModelComparator:
         if "regime_portfolio_selector" not in signal_frames:
             return leaderboard
 
-        selections = self._select_portfolio_models_by_regime(signal_frames, regime_series, returns)
+        selections = getattr(self, "_last_portfolio_selection", None) or self._select_portfolio_models_by_regime(
+            signal_frames,
+            regime_series,
+            returns,
+        )
         if not selections:
             return leaderboard
 
@@ -902,61 +907,46 @@ class AlphaModelComparator:
         returns: pd.DataFrame,
         max_models_per_regime: int = 6,
     ) -> dict[int, list[str]]:
-        excluded = {
-            "cash",
-            "regime_selector",
-            "defensive_regime_selector",
-            "regime_rank_ic_selector",
-            "regime_portfolio_selector",
-            "risk_managed_regime_selector",
-            "risk_managed_defensive_regime_selector",
-            "risk_managed_regime_rank_ic_selector",
+        candidate_pool = {
+            0: [
+                "vol_adjusted_reversal",
+                "technical_multi_horizon",
+                "elastic_net_last_step",
+                "technical_trend",
+                "defensive_regime_selector",
+                "ridge_summary",
+            ],
+            1: [
+                "technical_multi_horizon",
+                "technical_blend",
+                "vol_adjusted_momentum",
+                "ridge_summary",
+                "defensive_regime_selector",
+                "elastic_net_last_step",
+            ],
+            2: [
+                "elastic_net",
+                "technical_multi_horizon",
+                "technical_trend",
+                "ridge_summary",
+                "defensive_regime_selector",
+                "vol_adjusted_momentum",
+            ],
+            3: [
+                "risk_managed_ridge_summary",
+                "vol_adjusted_reversal",
+                "technical_reversal",
+                "defensive_regime_selector",
+                "vol_adjusted_momentum",
+                "technical_multi_horizon",
+            ],
         }
-        base_models = [model_name for model_name in signal_frames if model_name not in excluded]
-        if not base_models:
-            return {}
-
-        aligned_regimes = regime_series.reindex(returns.index)
-        rank_ic_scores = self._rank_ic_scores_by_regime(signal_frames, regime_series, returns)
-        choices: dict[int, list[str]] = {}
-        for regime in sorted(int(value) for value in aligned_regimes.dropna().unique()):
-            regime_dates = aligned_regimes[aligned_regimes.eq(regime)].index
-            rows = []
-            for model_name in base_models:
-                stats = self._project_signal_backtest(
-                    signal_frames[model_name].reindex(regime_dates),
-                    returns.reindex(regime_dates),
-                )
-                if stats["projected_backtest_sharpe"] <= 0.0 or stats["projected_total_return"] <= 0.0:
-                    continue
-                rows.append(
-                    {
-                        "model": model_name,
-                        "projected_backtest_sharpe": stats["projected_backtest_sharpe"],
-                        "projected_total_return": stats["projected_total_return"],
-                        "projected_mean_turnover": stats["projected_mean_turnover"],
-                    }
-                )
-
-            selected: list[str] = []
-            if rows:
-                projected = pd.DataFrame(rows).sort_values(
-                    ["projected_backtest_sharpe", "projected_total_return", "projected_mean_turnover"],
-                    ascending=[False, False, True],
-                )
-                selected.extend(str(model_name) for model_name in projected["model"].head(max_models_per_regime))
-
-            if not rank_ic_scores.empty:
-                ic_ranked = rank_ic_scores[rank_ic_scores["regime"].eq(regime)].sort_values(
-                    ["mean_rank_ic", "ic_positive_rate", "mean_ic"],
-                    ascending=[False, False, False],
-                )
-                for model_name in ic_ranked["model"].head(3):
-                    if str(model_name) in base_models and str(model_name) not in selected:
-                        selected.append(str(model_name))
-
-            choices[regime] = selected[:max_models_per_regime]
-
+        available = set(signal_frames)
+        regimes = sorted(int(value) for value in regime_series.reindex(returns.index).dropna().unique())
+        choices = {
+            regime: [model for model in candidate_pool.get(regime, []) if model in available][:max_models_per_regime]
+            for regime in regimes
+        }
         return {regime: models for regime, models in choices.items() if models}
 
     @staticmethod
