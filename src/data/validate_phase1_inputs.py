@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import pandas as pd
+
 from src.config import load_config
 from src.data.ingestion import MarketDataIngester
 
@@ -41,8 +43,16 @@ def main() -> None:
     print(f"Cache directory: {config.data.cache_dir}")
     if cached_prices is not None:
         cached_tickers = sorted(cached_prices.columns.get_level_values(0).unique())
-        print(f"Cached multi-ticker parquet: found ({len(cached_tickers)} tickers)")
-        print("Phase 1 price ingestion can use this cache without individual ticker files.")
+        cached_end = cached_prices.index.max()
+        requested_end = pd.Timestamp(config.data.end_date)
+        if cached_end >= requested_end:
+            print(f"Cached multi-ticker parquet: found ({len(cached_tickers)} tickers)")
+            print("Phase 1 price ingestion can use this cache without individual ticker files.")
+        else:
+            print(
+                f"Cached multi-ticker parquet: stale ({len(cached_tickers)} tickers, ends {cached_end.date()})"
+            )
+            print(f"Requested end date: {requested_end.date()}")
     else:
         print("Cached multi-ticker parquet: not found")
     print(f"Tickers checked: {len(statuses)}")

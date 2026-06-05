@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import date
 
 from src.config import load_config
 
@@ -47,3 +48,30 @@ def test_load_config_parses_data_paths(tmp_path: Path):
     assert config.risk.volatility_lookback == 21
     assert config.risk.volatility_floor == 0.005
     assert config.risk.max_position_weight == 1.0
+
+
+def test_load_config_resolves_today_tokens(tmp_path: Path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "data:",
+                "  universe: [SPY]",
+                "  start_date: '2020-01-01'",
+                "  end_date: 'today'",
+                "  benchmark: 'SPY'",
+                "  cache_dir: 'data/raw'",
+                "  processed_dir: 'data/processed'",
+                "  local_data_dir: 'data/raw'",
+                "  allow_remote_downloads: true",
+                "rl:",
+                "  test_end: 'today'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.data.end_date == date.today().isoformat()
+    assert config.rl.test_end == date.today().isoformat()

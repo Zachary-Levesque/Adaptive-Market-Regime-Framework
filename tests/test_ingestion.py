@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 from pathlib import Path
 
 from src.data.ingestion import MarketDataIngester
@@ -243,3 +244,16 @@ def test_download_prices_uses_local_files_without_yfinance(tmp_path: Path, monke
 
     assert not prices.empty
     assert ("SPY", "Adj Close") in prices.columns
+
+
+def test_download_prices_force_refresh_rejects_stale_cache(tmp_path: Path, monkeypatch):
+    ingester = MarketDataIngester(cache_dir=tmp_path, allow_remote_downloads=True)
+    stale_prices = _sample_prices().iloc[:10].copy()
+    ingester._save_cached_prices(stale_prices, ["SPY", "QQQ"], "2024-01-01", "2024-01-31", "1d")
+    ingester.force_refresh_prices = True
+
+    monkeypatch.setattr(ingestion_module, "yf", object())
+    monkeypatch.setattr(ingester, "_download_in_batches", lambda *args, **kwargs: [])
+
+    with pytest.raises(ValueError):
+        ingester.download_prices(["SPY", "QQQ"], "2024-01-01", "2024-02-15")

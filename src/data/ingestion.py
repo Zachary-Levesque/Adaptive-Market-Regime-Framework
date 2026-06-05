@@ -50,6 +50,7 @@ class MarketDataIngester:
         self.retry_attempts = retry_attempts
         self.retry_delay_seconds = retry_delay_seconds
         self.stooq_api_key = stooq_api_key or os.getenv("STOOQ_API_KEY")
+        self.force_refresh_prices = False
 
     @dataclass(frozen=True)
     class LocalTickerStatus:
@@ -74,6 +75,7 @@ class MarketDataIngester:
     ) -> pd.DataFrame:
         """Download OHLCV data as a ticker-first MultiIndex DataFrame."""
         requested_tickers = list(dict.fromkeys(tickers))
+        force_refresh = bool(getattr(self, "force_refresh_prices", False))
         cached = self._load_cached_prices(
             requested_tickers,
             start,
@@ -81,12 +83,60 @@ class MarketDataIngester:
             interval,
             require_full_start_coverage=self.allow_remote_downloads,
         )
-        if cached is not None:
+        if cached is not None and not force_refresh and self._cache_covers_range(cached, start, end):
             logger.info("Loaded cached price history for {} tickers", len(cached.columns.levels[0]))
             return cached
 
+        if force_refresh and self.allow_remote_downloads:
+            if yf is None:
+                raise ImportError(
+                    "Remote refresh is enabled but yfinance is not installed. "
+                    "Install Phase 1 dependencies or disable remote refresh."
+                )
+            logger.info("Refreshing all tickers from remote providers before falling back to local cache")
+            frames = self._download_in_batches(requested_tickers, start, end, interval)
+            unresolved = self._missing_from_frames(requested_tickers, frames)
+            if unresolved:
+                local_frames, local_missing = self._load_local_price_frames(unresolved, start, end)
+                frames.extend(local_frames)
+                unresolved = self._missing_from_frames(requested_tickers, frames)
+
+            if frames and not unresolved:
+                prices = pd.concat(frames, axis=1).sort_index(axis=1)
+                prices.index = pd.to_datetime(prices.index).tz_localize(None)
+                if self._frame_covers_range(prices, start, end):
+                    logger.info("Downloaded price history for {} tickers", len(prices.columns.levels[0]))
+                    self._save_cached_prices(prices, requested_tickers, start, end, interval)
+                    return prices
+                logger.warning(
+                    "Remote refresh returned price history that does not fully cover {} to {}; "
+                    "falling back to cached or local data.",
+                    start,
+                    end,
+                )
+
+            fallback_cached = self._load_cached_prices(
+                requested_tickers,
+                start,
+                end,
+                interval,
+                require_full_start_coverage=False,
+            )
+            if fallback_cached is not None and self._cache_covers_range(fallback_cached, start, end):
+                logger.warning(
+                    "Remote refresh failed to fully cover the requested range; "
+                    "falling back to overlapping cached price history."
+                )
+                return fallback_cached
+
+            local_hint = self._format_local_data_hint(unresolved or requested_tickers)
+            raise ValueError(
+                f"Remote refresh incomplete. Unresolved tickers: {', '.join(unresolved or requested_tickers)}. "
+                f"Local raw-data directory: {self.local_data_dir or 'not configured'}. {local_hint}"
+            )
+
         local_frames, missing_tickers = self._load_local_price_frames(requested_tickers, start, end)
-        if local_frames and not missing_tickers:
+        if local_frames and not missing_tickers and not force_refresh:
             prices = pd.concat(local_frames, axis=1).sort_index(axis=1)
             prices.index = pd.to_datetime(prices.index).tz_localize(None)
             logger.info("Loaded local price history for {} tickers", len(prices.columns.levels[0]))
@@ -413,6 +463,21 @@ class MarketDataIngester:
             )
 
         return filtered.sort_index(axis=1)
+
+    @staticmethod
+    def _cache_covers_range(cached: pd.DataFrame, start: str, end: str) -> bool:
+        if cached.empty:
+            return False
+        return MarketDataIngester._frame_covers_range(cached, start, end)
+
+    @staticmethod
+    def _frame_covers_range(frame: pd.DataFrame, start: str, end: str) -> bool:
+        if frame.empty:
+            return False
+        start_ts = pd.Timestamp(start)
+        end_ts = pd.Timestamp(end)
+        index = pd.to_datetime(frame.index).tz_localize(None)
+        return index.min() <= start_ts and index.max() >= end_ts
 
     def _load_local_price_frames(
         self,

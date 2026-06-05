@@ -32,9 +32,7 @@ Implemented but still research-gated:
 
 The current selected signal is `regime_portfolio_selector`. The readiness gate passes, but the RL layer remains an exploratory extension rather than the production baseline.
 
-The repo now includes a one-command refresh-and-launch path via `./run_pipeline.sh`. It bootstraps a clean `.venv`, imports local Stooq data when available, rebuilds the artifacts, and launches the Streamlit dashboard.
-
-The checked-in artifacts currently end at `2024-12-31`. To make the system current, rerun the refresh script with a newer Stooq archive or enable remote downloads for the missing history.
+The repo now includes a one-command refresh-and-launch path via `./run_pipeline.sh`. It bootstraps a clean `.venv`, imports local Stooq data when available, rebuilds the artifacts, and launches the Streamlit dashboard. Rerun it whenever you want the saved artifacts refreshed to the latest available data source.
  
 ---
  

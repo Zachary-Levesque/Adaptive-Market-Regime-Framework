@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -155,8 +156,8 @@ def load_config(path: str | Path) -> AppConfig:
     return AppConfig(
         data=DataConfig(
             universe=list(data_section["universe"]),
-            start_date=str(data_section["start_date"]),
-            end_date=str(data_section["end_date"]),
+            start_date=_resolve_date_string(data_section["start_date"]),
+            end_date=_resolve_date_string(data_section["end_date"]),
             benchmark=str(data_section["benchmark"]),
             cache_dir=cache_dir,
             processed_dir=processed_dir,
@@ -254,7 +255,7 @@ def load_config(path: str | Path) -> AppConfig:
             validation_start=str(rl_section.get("validation_start", "2019-01-01")),
             validation_end=str(rl_section.get("validation_end", "2021-12-31")),
             test_start=str(rl_section.get("test_start", "2022-01-01")),
-            test_end=str(rl_section.get("test_end", "2024-12-31")),
+            test_end=_resolve_date_string(rl_section.get("test_end", "2024-12-31")),
         ),
         execution=ExecutionConfig(
             max_single_trade_size=float(execution_section.get("max_single_trade_size", 0.10)),
@@ -265,6 +266,14 @@ def load_config(path: str | Path) -> AppConfig:
             small_mid_cost_bps=float(execution_section.get("small_mid_cost_bps", 18.0)),
         ),
     )
+
+
+def _resolve_date_string(value: Any) -> str:
+    text = str(value).strip()
+    lowered = text.lower()
+    if lowered in {"today", "now", "current", "latest"}:
+        return date.today().isoformat()
+    return text
 
 
 
