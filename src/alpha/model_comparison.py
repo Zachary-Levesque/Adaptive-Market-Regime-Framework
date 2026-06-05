@@ -898,7 +898,14 @@ class AlphaModelComparator:
         filled = signals.copy()
         inactive = ~filled.notna().any(axis=1)
         warm_active = warm.notna().any(axis=1)
-        fill_mask = inactive & warm_active.reindex(filled.index).fillna(False)
+        learned_active = signals.notna().any(axis=1)
+        first_learned_date = learned_active[learned_active].index.min() if learned_active.any() else None
+        before_learned = (
+            pd.Series(True, index=filled.index)
+            if first_learned_date is None
+            else pd.Series(filled.index < first_learned_date, index=filled.index)
+        )
+        fill_mask = inactive & before_learned & warm_active.reindex(filled.index).fillna(False)
         filled.loc[fill_mask] = warm.reindex(index=filled.index, columns=filled.columns).loc[fill_mask]
         return filled
 
