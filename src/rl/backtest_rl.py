@@ -93,13 +93,15 @@ def main() -> None:
         ),
     )
     static_artifacts = static_backtester.run(start=config.rl.test_start, end=config.rl.test_end, stress_periods=config.risk.stress_periods)
-    static_results = static_artifacts.daily_results
+    static_execution = simulator.simulate(static_artifacts.weights, dataset.returns, dataset.prices)
+    static_results = static_execution.daily_results.copy()
+    static_results["portfolio_return"] = static_results["net_return"]
     metrics = PerformanceMetrics()
     benchmark = dataset.returns.loc[rl_results.index, "SPY"].reindex(rl_results.index).fillna(0.0)
     comparison = pd.DataFrame(
         {
             "rl_agent": metrics.summarize(rl_results["portfolio_return"]),
-            "static_signal": metrics.summarize(static_results["strategy_return"].reindex(rl_results.index).fillna(0.0)),
+            "static_signal": metrics.summarize(static_results["portfolio_return"].reindex(rl_results.index).fillna(0.0)),
             "SPY": metrics.summarize(benchmark),
         }
     ).T
