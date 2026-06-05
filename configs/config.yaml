@@ -37,7 +37,7 @@ regime:
     3: "High-Vol Crisis"
 
 alpha:
-  target_horizon: 5
+  target_horizon: 10
   diagnostics_path: "data/processed/alpha_diagnostics.parquet"
   comparison_path: "data/processed/alpha_model_comparison.parquet"
   signals_dir: "data/processed/alpha_signals"
