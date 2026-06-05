@@ -51,7 +51,7 @@ alpha:
     epochs: 100
     learning_rate: 0.001
   walk_forward:
-    train_window: 756
+    train_window: 252
     test_window: 126
     step_size: 63
 
