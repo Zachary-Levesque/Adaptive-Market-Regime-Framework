@@ -82,7 +82,7 @@ class TradingEnvironment(gym.Env):
 
         obs_dim = self.n_regimes + (self.n_assets * 3) + 5
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
-        self.action_space = spaces.Box(low=0.5, high=1.5, shape=(self.n_assets,), dtype=np.float32)
+        self.action_space = spaces.Box(low=0.0, high=1.5, shape=(self.n_assets,), dtype=np.float32)
 
         self._dates = self.returns.index.to_list()
         self._start_pos = 0
@@ -136,6 +136,8 @@ class TradingEnvironment(gym.Env):
 
         next_returns = self.returns.iloc[next_pos].fillna(0.0)
         gross_return = float((trade_weights * next_returns).sum())
+        baseline_weights = self.signal_weights.iloc[self._position].reindex(self.assets).fillna(0.0)
+        baseline_return = float((baseline_weights * next_returns).sum())
         transaction_cost = turnover * (self.transaction_cost_bps / 10_000.0)
         portfolio_return = gross_return - transaction_cost
 
@@ -155,9 +157,10 @@ class TradingEnvironment(gym.Env):
         self._last_drawdown = current_drawdown
 
         rolling_vol = self._rolling_strategy_vol()
-        risk_adjusted_return = portfolio_return / max(rolling_vol, 1e-6)
+        risk_adjusted_return = portfolio_return
+        baseline_risk_adjusted = baseline_return
         drawdown_penalty = max(0.0, current_drawdown - self.drawdown_penalty_threshold) * self.drawdown_penalty_scale
-        reward = risk_adjusted_return - drawdown_penalty - transaction_cost
+        reward = risk_adjusted_return + 0.5 * (risk_adjusted_return - baseline_risk_adjusted) - drawdown_penalty - transaction_cost
 
         terminated = next_pos >= self._episode_end
         truncated = bool(current_drawdown >= self.max_drawdown_stop)
@@ -222,10 +225,11 @@ class TradingEnvironment(gym.Env):
         base_weights = self.signal_weights.loc[date].reindex(self.assets).fillna(0.0).astype(float)
         scaled = base_weights.values * action
         gross = float(np.abs(scaled).sum())
+        exposure = float(np.clip(np.mean(action), 0.0, 1.5))
         if gross <= 0.0 or not np.isfinite(gross):
-            weights = np.full(self.n_assets, 1.0 / self.n_assets, dtype=float)
+            weights = np.full(self.n_assets, exposure / self.n_assets, dtype=float)
         else:
-            weights = scaled / gross
+            weights = scaled / gross * exposure
         return pd.Series(weights, index=self.assets, dtype=float)
 
     def _apply_rebalance_deadband(self, target_weights: pd.Series) -> pd.Series:
