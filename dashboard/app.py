@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -60,18 +59,26 @@ def current_regime_block(regime_probs: pd.DataFrame) -> tuple[str, float, pd.Ser
 def build_regime_area_chart(regime_probs: pd.DataFrame) -> go.Figure:
     if regime_probs.empty:
         return go.Figure()
-    fig = px.area(
-        regime_probs.reset_index().rename(columns={"index": "date"}),
-        x=regime_probs.index.name or "date",
-        y=regime_probs.columns,
-        title="Regime Probabilities",
-        color_discrete_map={
-            "Bull Trending": "#2ca02c",
-            "Low-Vol Compression": "#bcbd22",
-            "Bear Trending": "#ff7f0e",
-            "High-Vol Crisis": "#d62728",
-        },
-    )
+    colors = {
+        "Bull Trending": "#2ca02c",
+        "Low-Vol Compression": "#bcbd22",
+        "Bear Trending": "#ff7f0e",
+        "High-Vol Crisis": "#d62728",
+    }
+    fig = go.Figure()
+    x = regime_probs.index
+    for i, column in enumerate(regime_probs.columns):
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=regime_probs[column],
+                name=column,
+                mode="lines",
+                line={"color": colors.get(column, None), "width": 1.5},
+                fill="tozeroy" if i == 0 else "tonexty",
+                opacity=0.8,
+            )
+        )
     fig.update_layout(height=350, legend_title_text="Regime")
     return fig
 
@@ -146,7 +153,19 @@ def portfolio_page(data: dict[str, pd.DataFrame | Path]) -> None:
         ],
         ignore_index=True,
     )
-    fig = px.line(history, x="date", y="weight", color="asset", line_dash="source", title="30-Day Weight History")
+    fig = go.Figure()
+    dash_map = {"Signal": "solid", "RL": "dash"}
+    for (source, asset), subset in history.groupby(["source", "asset"], sort=False):
+        fig.add_trace(
+            go.Scatter(
+                x=subset["date"],
+                y=subset["weight"],
+                mode="lines",
+                name=f"{asset} ({source})",
+                line={"dash": dash_map.get(source, "solid")},
+            )
+        )
+    fig.update_layout(title="30-Day Weight History", height=420, legend_title_text="Asset / Source")
     fig.update_layout(height=420)
     st.plotly_chart(fig, use_container_width=True)
 
@@ -173,7 +192,10 @@ def backtest_page(data: dict[str, pd.DataFrame | Path]) -> None:
 
     if curves:
         equity = pd.concat(curves, axis=1)
-        fig = px.line(equity, x=equity.index, y=equity.columns, title="Equity Curves")
+        fig = go.Figure()
+        for column in equity.columns:
+            fig.add_trace(go.Scatter(x=equity.index, y=equity[column], mode="lines", name=column))
+        fig.update_layout(title="Equity Curves", height=420, legend_title_text="Series")
         fig.update_layout(height=420)
         st.plotly_chart(fig, use_container_width=True)
 
@@ -199,41 +221,49 @@ def diagnostics_page(data: dict[str, pd.DataFrame | Path]) -> None:
     static_backtest = data["static_backtest"]
 
     if not diag.empty and "ic" in diag.columns:
-        fig = px.line(diag.reset_index(), x="date", y="ic", title="Information Coefficient Time Series")
-        fig.update_layout(height=350)
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=diag.index, y=diag["ic"], mode="lines", name="IC"))
+        fig.update_layout(title="Information Coefficient Time Series", height=350)
         st.plotly_chart(fig, use_container_width=True)
 
     col1, col2 = st.columns(2)
     with col1:
         if not diag_regime.empty and "mean_ic" in diag_regime.columns:
-            fig = px.bar(
-                diag_regime.reset_index(),
-                x="regime",
-                y="mean_ic",
-                title="IC by Regime",
-                color="mean_ic",
-                color_continuous_scale="RdYlGn",
+            colors = ["#2ca02c" if v >= 0 else "#d62728" for v in diag_regime["mean_ic"]]
+            fig = go.Figure(
+                data=go.Bar(
+                    x=diag_regime.index.astype(str),
+                    y=diag_regime["mean_ic"],
+                    marker={"color": colors},
+                )
             )
+            fig.update_layout(title="IC by Regime", height=350)
             st.plotly_chart(fig, use_container_width=True)
     with col2:
         if not model_summary.empty and {"backtest_sharpe", "benchmark_sharpe_SPY"}.issubset(model_summary.columns):
-            fig = px.scatter(
-                model_summary.reset_index(),
-                x="benchmark_sharpe_SPY",
-                y="backtest_sharpe",
-                text=model_summary.reset_index().get("model"),
-                title="Signal vs Benchmark Sharpe",
+            labels = model_summary.index.astype(str).tolist()
+            fig = go.Figure(
+                data=go.Scatter(
+                    x=model_summary["benchmark_sharpe_SPY"],
+                    y=model_summary["backtest_sharpe"],
+                    mode="markers+text",
+                    text=labels,
+                    textposition="top center",
+                )
             )
+            fig.update_layout(title="Signal vs Benchmark Sharpe", height=350)
             st.plotly_chart(fig, use_container_width=True)
 
     if not static_backtest.empty and {"benchmark_return", "strategy_return"}.issubset(static_backtest.columns):
-        fig = px.scatter(
-            static_backtest.reset_index(),
-            x="benchmark_return",
-            y="strategy_return",
-            title="Daily Signal vs Benchmark Scatter",
-            opacity=0.5,
+        fig = go.Figure(
+            data=go.Scatter(
+                x=static_backtest["benchmark_return"],
+                y=static_backtest["strategy_return"],
+                mode="markers",
+                opacity=0.5,
+            )
         )
+        fig.update_layout(title="Daily Signal vs Benchmark Scatter", height=350)
         st.plotly_chart(fig, use_container_width=True)
 
 

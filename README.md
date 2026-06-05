@@ -31,6 +31,10 @@ Implemented but still research-gated:
 2. Intraday execution through Alpaca
 
 The current selected signal is `regime_portfolio_selector`. The readiness gate passes, but the RL layer remains an exploratory extension rather than the production baseline.
+
+The repo now includes a one-command refresh-and-launch path via `./run_pipeline.sh`. It bootstraps a clean `.venv`, imports local Stooq data when available, rebuilds the artifacts, and launches the Streamlit dashboard.
+
+The checked-in artifacts currently end at `2024-12-31`. To make the system current, rerun the refresh script with a newer Stooq archive or enable remote downloads for the missing history.
  
 ---
  
@@ -219,30 +223,28 @@ AMRF/
 ## Quick Start
 
 ```bash
-# Clone the repository
 git clone https://github.com/Zachary-Levesque/Adaptive-Market-Regime-Framework.git
 cd Adaptive-Market-Regime-Framework
+./run_pipeline.sh --source ./d_us_txt.zip
+```
 
-# Install dependencies
-pip install -r requirements.txt
+Useful variants:
 
-# Import Stooq bulk data
-python -m src.data.import_price_files --config configs/config.yaml --source /path/to/d_us_txt.zip
+```bash
+# Refresh using remote downloads for missing data
+./run_pipeline.sh --allow-remote-downloads --source ./d_us_txt.zip
 
-# Build the pipeline
-python -m src.data.build_phase1 --config configs/config.yaml
-python -m src.regime.build_phase2 --config configs/config.yaml
-python -m src.alpha.build_model_comparison --config configs/config.yaml --skip-ensemble
-python -m src.risk.build_phase4 --config configs/config.yaml
-python -m src.alpha.build_diagnostics --config configs/config.yaml
-python -m src.alpha.build_readiness --config configs/config.yaml
+# Include PPO training and backtest in the refresh
+./run_pipeline.sh --with-rl --source ./d_us_txt.zip
 
-# Train and evaluate the PPO layer
-python -m src.rl.train_ppo --config configs/config.yaml
-python -m src.rl.backtest_rl --config configs/config.yaml
+# Rebuild everything but do not launch the dashboard
+./run_pipeline.sh --no-dashboard --source ./d_us_txt.zip
+```
 
-# Launch the dashboard
-streamlit run dashboard/app.py
+If you only want the dashboard and the artifacts already exist, run:
+
+```bash
+.venv/bin/python -m streamlit run dashboard/app.py
 ```
  
 ---
