@@ -115,14 +115,29 @@ class PPOPositionSizingAgent:
 
     def train(self, total_timesteps: int | None = None) -> tuple[PPO, pd.DataFrame]:
         stats = self.build_stats()
-        train_env = self.build_environment(
-            self.config.rl.train_start,
-            self.config.rl.train_end,
-            random_start=True,
-            episode_length=252,
-            stats=stats,
-        )
-        validation_env = self.build_environment(
+        def make_train_env() -> Monitor:
+            return Monitor(
+                self.build_environment(
+                    self.config.rl.train_start,
+                    self.config.rl.train_end,
+                    random_start=True,
+                    episode_length=252,
+                    stats=stats,
+                )
+            )
+
+        def make_validation_env() -> Monitor:
+            return Monitor(
+                self.build_environment(
+                    self.config.rl.validation_start,
+                    self.config.rl.validation_end,
+                    random_start=False,
+                    episode_length=None,
+                    stats=stats,
+                )
+            )
+
+        train_eval_env = self.build_environment(
             self.config.rl.validation_start,
             self.config.rl.validation_end,
             random_start=False,
@@ -130,8 +145,8 @@ class PPOPositionSizingAgent:
             stats=stats,
         )
 
-        vec_env = DummyVecEnv([lambda: Monitor(train_env)])
-        eval_vec_env = DummyVecEnv([lambda: Monitor(validation_env)])
+        vec_env = DummyVecEnv([make_train_env])
+        eval_vec_env = DummyVecEnv([make_validation_env])
         policy_kwargs = {"net_arch": dict(pi=[256, 256, 128], vf=[256, 256, 128])}
 
         model = PPO(
@@ -164,7 +179,7 @@ class PPOPositionSizingAgent:
             render=False,
             n_eval_episodes=1,
         )
-        metrics_callback = TrainingMetricsCallback(validation_env, eval_freq=10_000)
+        metrics_callback = TrainingMetricsCallback(train_eval_env, eval_freq=10_000)
         callback = CallbackList([checkpoint_callback, eval_callback, metrics_callback])
 
         timesteps = int(total_timesteps or self.config.rl.total_timesteps)
@@ -253,7 +268,8 @@ def rollout_policy(
         )
 
     positions_df = pd.DataFrame(positions, index=pd.DatetimeIndex(dates), columns=env.assets)
-    results_df = pd.DataFrame(results).set_index(pd.DatetimeIndex(dates))
+    results_df = pd.DataFrame(results)
+    results_df.index = pd.DatetimeIndex(dates)
     results_df.index.name = "date"
     metrics = PerformanceMetrics()
     daily_returns = results_df["portfolio_return"]
