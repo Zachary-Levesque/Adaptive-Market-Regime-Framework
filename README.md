@@ -30,7 +30,7 @@ Implemented but still research-gated:
 1. PPO reinforcement-learning position sizing
 2. Intraday execution through Alpaca
 
-The current selected signal is `regime_portfolio_selector`. The readiness gate passes, but the RL layer remains an exploratory extension rather than the production baseline.
+The current selected signal is `regime_portfolio_selector`. The readiness gate is still blocked by a small benchmark Sharpe miss versus SPY, so the RL layer remains an exploratory extension rather than the production baseline.
 
 The repo now includes a one-command refresh-and-launch path via `./run_pipeline.sh`. It bootstraps a clean `.venv`, imports local Stooq data when available, rebuilds the artifacts, and launches the Streamlit dashboard. Rerun it whenever you want the saved artifacts refreshed to the latest available data source.
  
@@ -95,7 +95,7 @@ The repo now includes a one-command refresh-and-launch path via `./run_pipeline.
  
 | Tool | Purpose |
 |---|---|
-| Python 3.11 | Core language |
+| Python 3.12 | Core language |
 | PyTorch | Deep learning |
 | hmmlearn | Hidden Markov Models |
 | scikit-learn | Classical ML, GMM |
@@ -106,8 +106,7 @@ The repo now includes a one-command refresh-and-launch path via `./run_pipeline.
 | pandas-datareader | Fama-French factor data |
 | scipy | Statistical functions |
 | matplotlib / plotly | Visualization |
-| FastAPI | Dashboard backend |
-| React | Dashboard frontend |
+| Streamlit | Dashboard UI |
 | Docker | Containerization |
  
 ---
@@ -136,7 +135,7 @@ A PPO-based agent trained in a custom Gymnasium environment. The agent learns to
 Uses 5-minute bar data from Alpaca API for intraday entry timing. VWAP deviation signals, volume spikes, and momentum confirmation filters are applied to daily signals to improve execution quality and reduce slippage.
  
 ### Module 8 — Interactive Dashboard
-Full-stack dashboard with a FastAPI backend and React/Tailwind frontend. Provides real-time visualization of regime states, equity curves, readiness checklists, and risk diagnostics.
+Streamlit dashboard for regime states, equity curves, readiness checks, and risk diagnostics. It reads saved parquet artifacts and does not fetch live market data.
  
 ---
  
