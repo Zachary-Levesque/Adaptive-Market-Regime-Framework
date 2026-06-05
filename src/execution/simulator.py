@@ -61,13 +61,12 @@ class ExecutionSimulator:
         delta = target - current
         clipped = delta.clip(lower=-self.max_single_trade_size, upper=self.max_single_trade_size)
         executed = current + clipped
-        executed = executed.clip(lower=0.0)
 
-        total = float(executed.sum())
-        if total <= 0.0 or not np.isfinite(total):
+        gross = float(np.abs(executed).sum())
+        if gross <= 0.0 or not np.isfinite(gross):
             executed = pd.Series(1.0 / len(executed), index=executed.index, dtype=float)
         else:
-            executed = executed / total
+            executed = executed / gross
         return executed.astype(float)
 
     def simulate(
@@ -96,6 +95,7 @@ class ExecutionSimulator:
 
         for i, date in enumerate(aligned_targets.index[:-1]):
             target = aligned_targets.loc[date].astype(float)
+            previous_weights = current_weights.copy()
             executed = self.optimize_rebalance(
                 current_weights=current_weights,
                 target_weights=target,
@@ -129,7 +129,7 @@ class ExecutionSimulator:
                     "drawdown": drawdown,
                 }
             )
-            executed_rows.append(executed.rename(index=str))
+            executed_rows.append(executed.copy())
             current_weights = executed
 
             for asset in assets:
@@ -138,7 +138,7 @@ class ExecutionSimulator:
                         "date": next_date,
                         "asset": asset,
                         "tier": asset_costs["tiers"].get(asset, "large_cap"),
-                        "turnover": float(abs(executed.get(asset, 0.0) - current_weights.get(asset, 0.0))),
+                        "turnover": float(abs(executed.get(asset, 0.0) - previous_weights.get(asset, 0.0))),
                         "slippage_bps": float(asset_costs["asset_slippage_bps"].get(asset, 0.0)),
                         "cost_bps": float(asset_costs["asset_cost_bps"].get(asset, 0.0)),
                         "transaction_cost": float(asset_costs["asset_costs"].get(asset, 0.0)),
@@ -209,7 +209,7 @@ class ExecutionSimulator:
         window = frame.loc[:date].tail(self.adv_lookback)
         if window.empty:
             return 0.0
-        adv = (window["Close"].fillna(method="ffill") * window["Volume"].fillna(0.0)).mean()
+        adv = (window["Close"].ffill().bfill() * window["Volume"].fillna(0.0)).mean()
         return float(adv if np.isfinite(adv) else 0.0)
 
     def _slippage_bps(self, trade_weight: float, adv_dollar: float) -> float:
