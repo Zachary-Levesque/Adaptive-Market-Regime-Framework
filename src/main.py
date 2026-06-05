@@ -1,4 +1,8 @@
-"""AMRF Production Daily Runner."""
+"""Legacy AMRF daily runner prototype.
+
+Use ``./run_pipeline.sh`` for the supported refresh flow and
+``.venv/bin/python -m streamlit run dashboard/app.py`` for the dashboard.
+"""
 
 import argparse
 import sys
