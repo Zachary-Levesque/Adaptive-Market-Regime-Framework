@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from src.alpha.baselines import BaselineSpec, build_default_baseline_specs
+from src.alpha.diagnostics import AlphaDiagnostics
 from src.alpha.dataset import RegimeDataset, extract_regime_series
 from src.alpha.ensemble import RegimeAlphaEnsemble
 from src.alpha.training import temporal_train_val_split
@@ -237,6 +238,9 @@ class AlphaModelComparator:
                     "transaction_cost_bps": float(selected["transaction_cost_bps"]),
                     "rebalance_interval_days": int(selected["rebalance_interval_days"]),
                     "weighting_method": str(selected.get("weighting_method", self.weighting_method)),
+                    "long_fraction": float(selected.get("long_fraction", self.long_fraction)),
+                    "short_fraction": float(selected.get("short_fraction", self.short_fraction)),
+                    "max_position_weight": float(selected.get("max_position_weight", self.max_position_weight)),
                     "projected_backtest_sharpe": float(selected["projected_backtest_sharpe"]),
                     "projected_total_return": float(selected["projected_total_return"]),
                     "projected_mean_turnover": float(selected["projected_mean_turnover"]),
@@ -250,6 +254,9 @@ class AlphaModelComparator:
                     row["transaction_cost_bps"] = float(selected["transaction_cost_bps"])
                     row["rebalance_interval_days"] = int(selected["rebalance_interval_days"])
                     row["weighting_method"] = str(selected.get("weighting_method", self.weighting_method))
+                    row["long_fraction"] = float(selected.get("long_fraction", self.long_fraction))
+                    row["short_fraction"] = float(selected.get("short_fraction", self.short_fraction))
+                    row["max_position_weight"] = float(selected.get("max_position_weight", self.max_position_weight))
                     row["projected_backtest_sharpe"] = float(selected["projected_backtest_sharpe"])
                     row["projected_total_return"] = float(selected["projected_total_return"])
                     row["projected_mean_turnover"] = float(selected["projected_mean_turnover"])
@@ -852,18 +859,93 @@ class AlphaModelComparator:
         regime_series: pd.Series,
         returns: pd.DataFrame,
     ) -> dict[int, str]:
-        del regime_series, returns
-        preferred = {
-            0: "technical_multi_horizon",
-            1: "technical_multi_horizon",
-            2: "technical_multi_horizon",
-            3: "defensive_regime_selector",
-        }
-        return {
-            regime: model_name
-            for regime, model_name in preferred.items()
-            if model_name in signal_frames
-        }
+        candidate_pool = self._portfolio_candidate_models_by_regime(signal_frames, regime_series, returns)
+        if not candidate_pool:
+            return {}
+
+        aligned_regimes = regime_series.reindex(returns.index)
+        diagnostics = AlphaDiagnostics(forward_return_horizon=self.alpha_config.target_horizon)
+        ranked_choices: dict[int, list[str]] = {}
+        regime2_scores: dict[str, float] = {}
+
+        for regime, models in candidate_pool.items():
+            regime_dates = aligned_regimes[aligned_regimes.eq(regime)].index
+            if len(regime_dates) < self.min_regime_selection_folds:
+                continue
+
+            rows: list[dict[str, float | str]] = []
+            regime_returns = returns.reindex(regime_dates)
+            regime_labels = pd.Series(regime, index=regime_dates)
+            for model_name in models:
+                signals = signal_frames[model_name].reindex(regime_dates)
+                stats = self._project_signal_backtest(signals, regime_returns)
+                if stats["projected_backtest_sharpe"] <= 0.0 or stats["projected_total_return"] <= 0.0:
+                    continue
+
+                row: dict[str, float | str] = {
+                    "model": model_name,
+                    "projected_backtest_sharpe": float(stats["projected_backtest_sharpe"]),
+                    "projected_total_return": float(stats["projected_total_return"]),
+                    "projected_mean_turnover": float(stats["projected_mean_turnover"]),
+                }
+                if regime == 2:
+                    regime_artifacts = diagnostics.evaluate(signals, regime_returns, regime_labels)
+                    if not regime_artifacts.regime_summary.empty and 2 in regime_artifacts.regime_summary.index:
+                        regime_summary = regime_artifacts.regime_summary.loc[2]
+                        mean_rank_ic = float(regime_summary.get("mean_rank_ic", 0.0))
+                        row["mean_ic"] = float(regime_summary.get("mean_ic", 0.0))
+                        row["mean_rank_ic"] = mean_rank_ic
+                        row["ic_positive_rate"] = float(regime_summary.get("ic_positive_rate", 0.0))
+                        regime2_scores[model_name] = mean_rank_ic
+                rows.append(row)
+
+            if not rows:
+                continue
+
+            ranked = pd.DataFrame(rows)
+            if regime == 2 and "mean_rank_ic" in ranked.columns:
+                positive = ranked[ranked["mean_rank_ic"].gt(0.0)]
+                if not positive.empty:
+                    ranked = positive
+
+            ranked = ranked.sort_values(
+                ["projected_backtest_sharpe", "projected_total_return", "projected_mean_turnover"],
+                ascending=[False, False, True],
+            )
+            ranked_choices[regime] = ranked.head(2)["model"].astype(str).tolist()
+
+        if not ranked_choices:
+            return self._select_projected_models_by_regime(signal_frames, regime_series, returns)
+
+        regime_order = sorted(ranked_choices)
+        best_selection: dict[int, str] = {}
+        best_score: tuple[float, float, float, float] | None = None
+
+        import itertools
+
+        template = next(iter(signal_frames.values()))
+        for combo in itertools.product(*[ranked_choices[regime] for regime in regime_order]):
+            selection = dict(zip(regime_order, combo))
+            composite = pd.DataFrame(np.nan, index=template.index, columns=template.columns, dtype=float)
+            for regime, model_name in selection.items():
+                if model_name not in signal_frames:
+                    continue
+                mask = aligned_regimes.eq(regime).fillna(False)
+                composite.loc[mask] = signal_frames[model_name].loc[mask]
+            composite = self._with_warm_start_signals(composite, regime_series, returns)
+            stats = self._project_signal_backtest(composite, returns)
+            regime2_rank_ic = float(regime2_scores.get(selection.get(2, ""), 0.0))
+            score = (
+                float(stats["projected_backtest_sharpe"]),
+                float(stats["projected_total_return"]),
+                regime2_rank_ic,
+                -float(stats["projected_mean_turnover"]),
+            )
+            if best_score is None or score > best_score:
+                best_score = score
+                best_selection = selection
+
+        return best_selection
 
     @staticmethod
     def _with_warm_start_signals(
@@ -918,14 +1000,19 @@ class AlphaModelComparator:
     ) -> dict[int, list[str]]:
         candidate_pool = {
             0: [
+                "regime_selector",
+                "vol_adjusted_momentum",
                 "vol_adjusted_reversal",
                 "technical_multi_horizon",
+                "technical_blend",
                 "elastic_net_last_step",
                 "technical_trend",
                 "defensive_regime_selector",
                 "ridge_summary",
             ],
             1: [
+                "regime_selector",
+                "regime_rank_ic_selector",
                 "technical_multi_horizon",
                 "technical_blend",
                 "vol_adjusted_momentum",
@@ -934,18 +1021,24 @@ class AlphaModelComparator:
                 "elastic_net_last_step",
             ],
             2: [
+                "defensive_regime_selector",
+                "regime_rank_ic_selector",
+                "regime_selector",
                 "elastic_net",
+                "technical_blend",
                 "technical_multi_horizon",
                 "technical_trend",
                 "ridge_summary",
-                "defensive_regime_selector",
                 "vol_adjusted_momentum",
             ],
             3: [
+                "defensive_regime_selector",
+                "risk_managed_defensive_regime_selector",
+                "risk_managed_regime_selector",
+                "risk_managed_regime_rank_ic_selector",
                 "risk_managed_ridge_summary",
                 "vol_adjusted_reversal",
                 "technical_reversal",
-                "defensive_regime_selector",
                 "vol_adjusted_momentum",
                 "technical_multi_horizon",
             ],
@@ -1323,8 +1416,16 @@ class AlphaModelComparator:
         transaction_cost_bps: float | None = None,
         rebalance_interval_days: int | None = None,
         weighting_method: str | None = None,
+        long_fraction: float | None = None,
+        max_position_weight: float | None = None,
     ) -> dict[str, float]:
-        prepared = self._prepare_signal_projection(signals, returns, weighting_method=weighting_method)
+        prepared = self._prepare_signal_projection(
+            signals,
+            returns,
+            weighting_method=weighting_method,
+            long_fraction=long_fraction,
+            max_position_weight=max_position_weight,
+        )
         if prepared is None:
             return {
                 "projected_backtest_sharpe": 0.0,
@@ -1344,6 +1445,8 @@ class AlphaModelComparator:
         signals: pd.DataFrame,
         returns: pd.DataFrame,
         weighting_method: str | None = None,
+        long_fraction: float | None = None,
+        max_position_weight: float | None = None,
     ) -> tuple[pd.DataFrame, pd.DataFrame] | None:
         normalized_signals = self._normalize_frame(signals)
         normalized_returns = self._normalize_frame(returns)
@@ -1365,6 +1468,8 @@ class AlphaModelComparator:
             aligned_signals,
             returns=aligned_returns,
             weighting_method=weighting_method,
+            long_fraction=long_fraction,
+            max_position_weight=max_position_weight,
         )
         return aligned_returns, raw_weights
 
@@ -1450,9 +1555,13 @@ class AlphaModelComparator:
         signals: pd.DataFrame,
         returns: pd.DataFrame | None = None,
         weighting_method: str | None = None,
+        long_fraction: float | None = None,
+        max_position_weight: float | None = None,
     ) -> pd.DataFrame:
         """Convert a full signal matrix into long/short weights with minimal pandas overhead."""
         method = self.weighting_method if weighting_method is None else str(weighting_method)
+        long_fraction_value = self.long_fraction if long_fraction is None else float(long_fraction)
+        max_position_weight_value = self.max_position_weight if max_position_weight is None else float(max_position_weight)
         values = signals.to_numpy(dtype=float, copy=True)
         weights = np.zeros(values.shape, dtype=float)
         volatility_values = None
@@ -1472,7 +1581,7 @@ class AlphaModelComparator:
                 continue
 
             n_assets = len(valid)
-            n_long = self._side_count(n_assets, self.long_fraction)
+            n_long = self._side_count(n_assets, long_fraction_value)
             n_short = self._side_count(n_assets, self.short_fraction)
             if n_long == 0 and n_short == 0:
                 continue
@@ -1490,6 +1599,7 @@ class AlphaModelComparator:
                     long_gross,
                     volatility_values,
                     weighting_method=method,
+                    max_position_weight=max_position_weight_value,
                 )
             if len(short_idx):
                 weights[row_idx, short_idx] = -self._side_weight_values(
@@ -1498,6 +1608,7 @@ class AlphaModelComparator:
                     short_gross,
                     volatility_values,
                     weighting_method=method,
+                    max_position_weight=max_position_weight_value,
                 )
 
         return pd.DataFrame(weights, index=signals.index, columns=signals.columns)
@@ -1509,25 +1620,44 @@ class AlphaModelComparator:
         gross_side: float,
         volatility_values: np.ndarray | None,
         weighting_method: str | None = None,
+        max_position_weight: float | None = None,
     ) -> np.ndarray:
         method = self.weighting_method if weighting_method is None else str(weighting_method)
+        cap = self.max_position_weight if max_position_weight is None else float(max_position_weight)
         if method != "inverse_volatility" or volatility_values is None:
-            return self._cap_side_weights(np.full(len(asset_indices), gross_side / len(asset_indices), dtype=float), gross_side)
+            return self._cap_side_weights(
+                np.full(len(asset_indices), gross_side / len(asset_indices), dtype=float),
+                gross_side,
+                max_position_weight=cap,
+            )
 
         vols = volatility_values[row_idx, asset_indices]
         valid = np.isfinite(vols) & (vols > 0.0)
         if not valid.any():
-            return self._cap_side_weights(np.full(len(asset_indices), gross_side / len(asset_indices), dtype=float), gross_side)
+            return self._cap_side_weights(
+                np.full(len(asset_indices), gross_side / len(asset_indices), dtype=float),
+                gross_side,
+                max_position_weight=cap,
+            )
 
         inverse = np.zeros(len(asset_indices), dtype=float)
         inverse[valid] = 1.0 / np.maximum(vols[valid], self.volatility_floor)
         total = float(inverse.sum())
         if total <= 0.0:
-            return self._cap_side_weights(np.full(len(asset_indices), gross_side / len(asset_indices), dtype=float), gross_side)
-        return self._cap_side_weights(gross_side * inverse / total, gross_side)
+            return self._cap_side_weights(
+                np.full(len(asset_indices), gross_side / len(asset_indices), dtype=float),
+                gross_side,
+                max_position_weight=cap,
+            )
+        return self._cap_side_weights(gross_side * inverse / total, gross_side, max_position_weight=cap)
 
-    def _cap_side_weights(self, weights: np.ndarray, gross_side: float) -> np.ndarray:
-        cap = float(self.max_position_weight)
+    def _cap_side_weights(
+        self,
+        weights: np.ndarray,
+        gross_side: float,
+        max_position_weight: float | None = None,
+    ) -> np.ndarray:
+        cap = self.max_position_weight if max_position_weight is None else float(max_position_weight)
         if cap <= 0.0 or cap >= gross_side or weights.size == 0:
             return weights
 
@@ -1594,33 +1724,54 @@ class AlphaModelComparator:
         transaction_cost_bps_values: tuple[float, ...] = (0.0, 5.0, 10.0, 25.0),
         rebalance_interval_values: tuple[int, ...] = (1, 5, 10, 21),
         weighting_methods: tuple[str, ...] = ("equal", "inverse_volatility"),
+        long_fraction_values: tuple[float, ...] = (0.10, 0.15, 0.20),
+        max_position_weight_values: tuple[float, ...] = (0.25, 0.50),
     ) -> pd.DataFrame:
+        transaction_cost_bps_values = (float(self.transaction_cost_bps),)
+        weighting_methods = (self.weighting_method,)
         rows: list[dict[str, float | int | str]] = []
         for model_name, signals in signal_frames.items():
             active_signal_days = int(signals.notna().any(axis=1).sum())
             prepared_by_method = {
-                method: self._prepare_signal_projection(signals, returns, weighting_method=method)
+                (method, long_fraction, max_position_weight): self._prepare_signal_projection(
+                    signals,
+                    returns,
+                    weighting_method=method,
+                    long_fraction=long_fraction,
+                    max_position_weight=max_position_weight,
+                )
                 for method in weighting_methods
+                for long_fraction in long_fraction_values
+                for max_position_weight in max_position_weight_values
+                if long_fraction > 0.0
+                and max_position_weight > 0.0
+                and long_fraction <= 1.0
+                and max_position_weight <= 1.0
             }
             if all(prepared is None for prepared in prepared_by_method.values()):
                 for cost_bps in transaction_cost_bps_values:
                     for interval in rebalance_interval_values:
                         for method in weighting_methods:
-                            rows.append(
-                                {
-                                    "model": model_name,
-                                    "transaction_cost_bps": float(cost_bps),
-                                    "rebalance_interval_days": int(interval),
-                                    "weighting_method": method,
-                                    "active_signal_days": active_signal_days,
-                                    "projected_backtest_sharpe": 0.0,
-                                    "projected_total_return": 0.0,
-                                    "projected_mean_turnover": 0.0,
-                                }
-                            )
+                            for long_fraction in long_fraction_values:
+                                for max_position_weight in max_position_weight_values:
+                                    rows.append(
+                                        {
+                                            "model": model_name,
+                                            "transaction_cost_bps": float(cost_bps),
+                                            "rebalance_interval_days": int(interval),
+                                            "weighting_method": method,
+                                            "long_fraction": float(long_fraction),
+                                            "short_fraction": float(self.short_fraction),
+                                            "max_position_weight": float(max_position_weight),
+                                            "active_signal_days": active_signal_days,
+                                            "projected_backtest_sharpe": 0.0,
+                                            "projected_total_return": 0.0,
+                                            "projected_mean_turnover": 0.0,
+                                        }
+                                    )
                 continue
 
-            for method, prepared in prepared_by_method.items():
+            for (method, long_fraction, max_position_weight), prepared in prepared_by_method.items():
                 if prepared is None:
                     continue
                 aligned_returns, raw_weights = prepared
@@ -1645,6 +1796,9 @@ class AlphaModelComparator:
                                 "transaction_cost_bps": float(cost_bps),
                                 "rebalance_interval_days": int(interval),
                                 "weighting_method": method,
+                                "long_fraction": float(long_fraction),
+                                "short_fraction": float(self.short_fraction),
+                                "max_position_weight": float(max_position_weight),
                                 "active_signal_days": active_signal_days,
                                 **stats,
                             }
@@ -1657,6 +1811,9 @@ class AlphaModelComparator:
                     "transaction_cost_bps",
                     "rebalance_interval_days",
                     "weighting_method",
+                    "long_fraction",
+                    "short_fraction",
+                    "max_position_weight",
                     "active_signal_days",
                     "projected_backtest_sharpe",
                     "projected_total_return",
@@ -1666,7 +1823,14 @@ class AlphaModelComparator:
 
         report = pd.DataFrame(rows)
         return report.sort_values(
-            ["model", "transaction_cost_bps", "rebalance_interval_days", "weighting_method"],
+            [
+                "model",
+                "transaction_cost_bps",
+                "rebalance_interval_days",
+                "weighting_method",
+                "long_fraction",
+                "max_position_weight",
+            ],
             kind="stable",
         ).reset_index(drop=True)
 
