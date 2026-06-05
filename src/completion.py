@@ -55,6 +55,8 @@ class ProjectCompletionChecker:
         rows.extend(self._readiness_rows())
         rows.extend(self._performance_rows())
         rows.extend(self._data_coverage_rows())
+        rows.extend(self._rl_rows())
+        rows.extend(self._dashboard_rows())
 
         report = pd.DataFrame(rows)
         if report.empty:
@@ -177,6 +179,53 @@ class ProjectCompletionChecker:
                 "All configured price symbols must cover the GFC stress period for final completion.",
             )
         ]
+
+    def _rl_rows(self) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        if self.config.rl.model_path.exists():
+            rows.append(self._row("rl_model_saved", True, str(self.config.rl.model_path), "PPO model must be saved."))
+        if self.config.rl.backtest_results_path.exists():
+            rows.append(
+                self._row(
+                    "rl_backtest_results_saved",
+                    True,
+                    str(self.config.rl.backtest_results_path),
+                    "RL backtest results must be saved.",
+                )
+            )
+        if self.config.rl.positions_path.exists():
+            rows.append(
+                self._row(
+                    "rl_positions_saved",
+                    True,
+                    str(self.config.rl.positions_path),
+                    "RL position weights must be saved.",
+                )
+            )
+        if self.config.rl.comparison_path.exists():
+            rows.append(
+                self._row(
+                    "rl_comparison_saved",
+                    True,
+                    str(self.config.rl.comparison_path),
+                    "RL vs baseline comparison must be saved.",
+                )
+            )
+        return rows
+
+    def _dashboard_rows(self) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        dashboard_app = Path("dashboard/app.py")
+        dashboard_requirements = Path("dashboard/requirements.txt")
+        dashboard_readme = Path("README_dashboard.md")
+        for check, path, detail in [
+            ("dashboard_app_saved", dashboard_app, "Streamlit dashboard must exist."),
+            ("dashboard_requirements_saved", dashboard_requirements, "Dashboard requirements must exist."),
+            ("dashboard_readme_saved", dashboard_readme, "Dashboard README must exist."),
+        ]:
+            if path.exists():
+                rows.append(self._row(check, True, str(path), detail))
+        return rows
 
     @staticmethod
     def _row(check: str, passed: bool, value, detail: str) -> dict[str, object]:
