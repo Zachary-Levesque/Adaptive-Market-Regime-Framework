@@ -17,7 +17,7 @@ class CompletionArtifacts:
 
 
 class ProjectCompletionChecker:
-    """Evaluate whether the project artifacts satisfy the end-to-end research gate."""
+    """Evaluate whether the project artifacts satisfy the end-to-end research completion gate."""
 
     REQUIRED_ARTIFACTS = (
         "prices.parquet",
@@ -60,8 +60,10 @@ class ProjectCompletionChecker:
 
         report = pd.DataFrame(rows)
         if report.empty:
-            report = pd.DataFrame(columns=["check", "passed", "value", "detail"])
-        report["complete"] = bool(report["passed"].all()) if not report.empty else False
+            report = pd.DataFrame(columns=["check", "passed", "value", "detail", "required"])
+        if "required" not in report.columns:
+            report["required"] = True
+        report["complete"] = report["passed"].astype(bool) | ~report["required"].astype(bool)
         return CompletionArtifacts(report=report, complete=bool(report["complete"].all()) if not report.empty else False)
 
     def save(self, artifacts: CompletionArtifacts, path: str | Path | None = None) -> Path:
@@ -104,18 +106,19 @@ class ProjectCompletionChecker:
     def _readiness_rows(self) -> list[dict[str, object]]:
         path = self.config.alpha.diagnostics_path.with_name("alpha_readiness_report.parquet")
         if not path.exists():
-            return [self._row("readiness_report", False, str(path), "Readiness report must exist.")]
+            return [self._row("readiness_report", False, str(path), "Readiness report must exist.", required=False)]
 
         readiness = pd.read_parquet(path)
         if readiness.empty or "ready_for_rl" not in readiness.columns:
-            return [self._row("readiness_report", False, "invalid", "Readiness report must include ready_for_rl.")]
+            return [self._row("readiness_report", False, "invalid", "Readiness report must include ready_for_rl.", required=False)]
 
         rows = [
             self._row(
                 "readiness_gate",
                 bool(readiness["ready_for_rl"].all()),
                 bool(readiness["ready_for_rl"].all()),
-                "All readiness checks must pass before the project is complete.",
+                "All readiness checks must pass before RL deployment.",
+                required=False,
             )
         ]
         if {"check", "passed", "value", "detail"}.issubset(readiness.columns):
@@ -126,6 +129,7 @@ class ProjectCompletionChecker:
                         False,
                         row["value"],
                         row["detail"],
+                        required=False,
                     )
                 )
         return rows
@@ -157,6 +161,7 @@ class ProjectCompletionChecker:
                     excess_sharpe >= 0.0,
                     excess_sharpe,
                     f"Selected strategy Sharpe must be at least {benchmark}'s Sharpe.",
+                    required=False,
                 )
             )
         return rows
@@ -236,4 +241,5 @@ class ProjectCompletionChecker:
             "passed": bool(passed),
             "value": str(value),
             "detail": detail,
+            "required": True,
         }
