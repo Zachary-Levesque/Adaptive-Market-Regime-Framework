@@ -9,13 +9,13 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from stable_baselines3 import PPO
-from stable_baselines3.common.callbacks import BaseCallback, CallbackList, CheckpointCallback, EvalCallback
+from stable_baselines3.common.callbacks import BaseCallback, CallbackList, CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
 
 from src.config import AppConfig
 from src.risk.metrics import PerformanceMetrics
-from src.rl.data import RLDataset, split_by_date
+from src.rl.data import RLDataset
 from src.rl.environment import ObservationStats, TradingEnvironment
 
 
@@ -26,15 +26,23 @@ class RolloutArtifacts:
     comparison: pd.DataFrame
 
 
-class TrainingMetricsCallback(BaseCallback):
-    """Record validation metrics to tensorboard and a parquet-friendly history."""
+class ValidationSharpeCallback(BaseCallback):
+    """Record validation metrics and save the best model by Sharpe."""
 
-    def __init__(self, eval_env: TradingEnvironment, eval_freq: int = 10_000, verbose: int = 0) -> None:
+    def __init__(
+        self,
+        eval_env: TradingEnvironment,
+        best_model_path: Path,
+        eval_freq: int = 10_000,
+        verbose: int = 0,
+    ) -> None:
         super().__init__(verbose=verbose)
         self.eval_env = eval_env
+        self.best_model_path = Path(best_model_path)
         self.eval_freq = int(eval_freq)
         self.metrics = PerformanceMetrics()
         self.history: list[dict[str, float]] = []
+        self.best_validation_sharpe = float("-inf")
 
     def _on_step(self) -> bool:
         if self.n_calls % self.eval_freq != 0:
@@ -43,15 +51,25 @@ class TrainingMetricsCallback(BaseCallback):
         summary = evaluate_agent(self.model, self.eval_env)
         row = {
             "step": float(self.num_timesteps),
-            "episode_return": float(summary["total_return"]),
-            "portfolio_sharpe": float(summary["sharpe"]),
-            "max_drawdown": float(summary["max_drawdown"]),
-            "sortino": float(summary["sortino"]),
-            "calmar": float(summary["calmar"]),
+            "validation_total_return": float(summary["total_return"]),
+            "validation_sharpe": float(summary["sharpe"]),
+            "validation_max_drawdown": float(summary["max_drawdown"]),
+            "validation_sortino": float(summary["sortino"]),
+            "validation_calmar": float(summary["calmar"]),
         }
         self.history.append(row)
         for key, value in row.items():
             self.logger.record(f"validation/{key}", value)
+
+        if row["validation_sharpe"] > self.best_validation_sharpe:
+            self.best_validation_sharpe = row["validation_sharpe"]
+            self.best_model_path.parent.mkdir(parents=True, exist_ok=True)
+            self.model.save(self.best_model_path)
+            if self.verbose:
+                print(
+                    f"New best validation Sharpe {self.best_validation_sharpe:.6f} "
+                    f"at step {int(self.num_timesteps)}"
+                )
         return True
 
 
@@ -93,28 +111,18 @@ class PPOPositionSizingAgent:
         )
 
     def build_stats(self) -> ObservationStats:
-        train_returns = split_by_date(self.dataset.returns, self.config.rl.train_start, self.config.rl.train_end)
-        train_signals = split_by_date(self.dataset.selected_signal, self.config.rl.train_start, self.config.rl.train_end)
-        train_regime_features = split_by_date(
-            self.dataset.regime_features, self.config.rl.train_start, self.config.rl.train_end
+        train_env = self.build_environment(
+            self.config.rl.train_start,
+            self.config.rl.train_end,
+            random_start=False,
+            episode_length=None,
+            stats=None,
         )
-        train_vix = train_regime_features["vix_level"] if "vix_level" in train_regime_features.columns else pd.Series(0.0, index=train_returns.index)
-        signal_mean = train_signals.mean(axis=0).fillna(0.0)
-        signal_std = train_signals.std(axis=0, ddof=0).replace(0.0, 1.0).fillna(1.0)
-        vol = train_returns.rolling(self.config.risk.volatility_lookback, min_periods=5).std(ddof=0)
-        vol_mean = vol.mean(axis=0).fillna(0.0)
-        vol_std = vol.std(axis=0, ddof=0).replace(0.0, 1.0).fillna(1.0)
-        return ObservationStats(
-            signal_mean=signal_mean,
-            signal_std=signal_std,
-            vol_mean=vol_mean,
-            vol_std=vol_std,
-            vix_mean=float(train_vix.mean()),
-            vix_std=float(train_vix.std(ddof=0) or 1.0),
-        )
+        return train_env._stats
 
     def train(self, total_timesteps: int | None = None) -> tuple[PPO, pd.DataFrame]:
         stats = self.build_stats()
+
         def make_train_env() -> Monitor:
             return Monitor(
                 self.build_environment(
@@ -122,17 +130,6 @@ class PPOPositionSizingAgent:
                     self.config.rl.train_end,
                     random_start=True,
                     episode_length=252,
-                    stats=stats,
-                )
-            )
-
-        def make_validation_env() -> Monitor:
-            return Monitor(
-                self.build_environment(
-                    self.config.rl.validation_start,
-                    self.config.rl.validation_end,
-                    random_start=False,
-                    episode_length=None,
                     stats=stats,
                 )
             )
@@ -146,7 +143,6 @@ class PPOPositionSizingAgent:
         )
 
         vec_env = DummyVecEnv([make_train_env])
-        eval_vec_env = DummyVecEnv([make_validation_env])
         policy_kwargs = {"net_arch": dict(pi=[256, 256, 128], vf=[256, 256, 128])}
 
         model = PPO(
@@ -170,27 +166,23 @@ class PPOPositionSizingAgent:
             save_path=str(self.config.rl.model_path.parent / "checkpoints"),
             name_prefix="ppo_position_sizer",
         )
-        eval_callback = EvalCallback(
-            eval_vec_env,
-            best_model_save_path=str(self.config.rl.model_path.parent / "best_model"),
-            log_path=str(self.config.rl.model_path.parent / "eval_logs"),
+        best_model_path = self.config.rl.model_path.parent / "best_validation_model.zip"
+        validation_callback = ValidationSharpeCallback(
+            train_eval_env,
+            best_model_path=best_model_path,
             eval_freq=10_000,
-            deterministic=True,
-            render=False,
-            n_eval_episodes=1,
+            verbose=1,
         )
-        metrics_callback = TrainingMetricsCallback(train_eval_env, eval_freq=10_000)
-        callback = CallbackList([checkpoint_callback, eval_callback, metrics_callback])
+        callback = CallbackList([checkpoint_callback, validation_callback])
 
-        timesteps = int(total_timesteps or self.config.rl.total_timesteps)
+        timesteps = int(max(total_timesteps or self.config.rl.total_timesteps, 500_000))
         model.learn(total_timesteps=timesteps, callback=callback)
 
-        best_model_path = self.config.rl.model_path.parent / "best_model" / "best_model.zip"
         if best_model_path.exists():
             model = PPO.load(best_model_path, env=vec_env)
 
         self.save_model(model)
-        history = pd.DataFrame(metrics_callback.history)
+        history = pd.DataFrame(validation_callback.history)
         if not history.empty:
             history.to_parquet(self.config.rl.training_history_path)
         return model, history
