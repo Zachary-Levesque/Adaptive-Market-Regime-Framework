@@ -19,6 +19,9 @@ class SignalSelection:
     transaction_cost_bps: float | None = None
     rebalance_interval_days: int | None = None
     weighting_method: str | None = None
+    long_fraction: float | None = None
+    short_fraction: float | None = None
+    max_position_weight: float | None = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -75,6 +78,11 @@ def main() -> None:
         else config.risk.rebalance_interval_days
     )
     weighting_method = selection.weighting_method or config.risk.weighting_method
+    long_fraction = selection.long_fraction if selection.long_fraction is not None else config.risk.long_fraction
+    short_fraction = selection.short_fraction if selection.short_fraction is not None else config.risk.short_fraction
+    max_position_weight = (
+        selection.max_position_weight if selection.max_position_weight is not None else config.risk.max_position_weight
+    )
 
     backtester = AMRFBacktester(
         returns=returns,
@@ -82,15 +90,15 @@ def main() -> None:
         regime_labels=regime_labels,
         config=BacktestConfig(
             max_gross_exposure=args.max_gross_exposure or config.risk.max_gross_exposure,
-            long_fraction=config.risk.long_fraction,
-            short_fraction=config.risk.short_fraction,
+            long_fraction=long_fraction,
+            short_fraction=short_fraction,
             transaction_cost_bps=transaction_cost_bps,
             benchmark=config.data.benchmark,
             rebalance_interval_days=rebalance_interval_days,
             weighting_method=weighting_method,
             volatility_lookback=config.risk.volatility_lookback,
             volatility_floor=config.risk.volatility_floor,
-            max_position_weight=config.risk.max_position_weight,
+            max_position_weight=max_position_weight,
         ),
     )
     artifacts = backtester.run(start=args.start, end=args.end, stress_periods=config.risk.stress_periods)
@@ -101,6 +109,9 @@ def main() -> None:
     print(f"Transaction cost bps: {transaction_cost_bps}")
     print(f"Rebalance interval days: {rebalance_interval_days}")
     print(f"Weighting method: {weighting_method}")
+    print(f"Long fraction: {long_fraction}")
+    print(f"Short fraction: {short_fraction}")
+    print(f"Max position weight: {max_position_weight}")
 
 
 def resolve_signal_path(config, override: str | None = None):
@@ -129,6 +140,9 @@ def resolve_signal_selection(config, override: str | None = None) -> SignalSelec
                     transaction_cost_bps=_optional_float(selection.iloc[0].get("transaction_cost_bps")),
                     rebalance_interval_days=_optional_int(selection.iloc[0].get("rebalance_interval_days")),
                     weighting_method=_optional_str(selection.iloc[0].get("weighting_method")),
+                    long_fraction=_optional_float(selection.iloc[0].get("long_fraction")),
+                    short_fraction=_optional_float(selection.iloc[0].get("short_fraction")),
+                    max_position_weight=_optional_float(selection.iloc[0].get("max_position_weight")),
                 )
 
     return SignalSelection(signal_path=config.alpha.signals_path)
