@@ -257,3 +257,34 @@ def test_download_prices_force_refresh_rejects_stale_cache(tmp_path: Path, monke
 
     with pytest.raises(ValueError):
         ingester.download_prices(["SPY", "QQQ"], "2024-01-01", "2024-02-15")
+
+
+def test_download_prices_prefers_complete_local_archive_over_stale_cache(tmp_path: Path, monkeypatch):
+    raw_dir = tmp_path / "raw"
+    imported = raw_dir / "imported"
+    imported.mkdir(parents=True)
+    sample = _sample_prices()
+    for ticker in ["SPY", "QQQ"]:
+        frame = sample[[ticker]].copy()
+        lines = ["<TICKER>,<PER>,<DATE>,<TIME>,<OPEN>,<HIGH>,<LOW>,<CLOSE>,<VOL>,<OPENINT>"]
+        for date, row in frame.droplevel(0, axis=1).iterrows():
+            lines.append(
+                f"{ticker}.US,D,{date.strftime('%Y%m%d')},000000,{row['Open']},{row['High']},{row['Low']},{row['Close']},{int(row['Volume'])},0"
+            )
+        (imported / f"{ticker.lower()}.txt").write_text("\n".join(lines), encoding="utf-8")
+
+    ingester = MarketDataIngester(cache_dir=tmp_path, local_data_dir=raw_dir, allow_remote_downloads=True)
+    stale_prices = _sample_prices().iloc[:5].copy()
+    ingester._save_cached_prices(stale_prices, ["SPY", "QQQ"], "2024-01-01", "2024-01-31", "1d")
+    ingester.force_refresh_prices = True
+
+    monkeypatch.setattr(
+        ingester,
+        "_download_in_batches",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("remote should not be used")),
+    )
+
+    prices = ingester.download_prices(["SPY", "QQQ"], "2024-01-01", "2024-01-31")
+
+    assert prices.index.max() == pd.Timestamp("2024-01-31")
+    assert prices.index.min() == pd.Timestamp("2024-01-01")
