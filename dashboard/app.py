@@ -111,8 +111,7 @@ def metric_block(
     help_text: str,
     delta: str | None = None,
 ) -> None:
-    column.markdown(f"<div style='font-size:0.9rem'>{hover_text(label, help_text)}</div>", unsafe_allow_html=True)
-    column.metric("", value, delta)
+    column.metric(label, value, delta, help=help_text)
 
 
 def build_regime_area_chart(regime_probs: pd.DataFrame) -> go.Figure:
@@ -293,13 +292,13 @@ def overview_page(data: dict[str, pd.DataFrame | Path]) -> None:
                 "The portfolio layer blends the alpha sleeve with SPY using explicit regime exposure settings.",
             )
             visible = [c for c in ["regime", "alpha_exposure", "benchmark", "benchmark_exposure"] if c in allocation_policy.columns]
-            st.dataframe(allocation_policy[visible], use_container_width=True)
+            st.dataframe(allocation_policy[visible], width="stretch")
 
     if not model_summary.empty:
         st.markdown(f"### {hover_text('Selected Alpha Candidates', 'The highest-ranked alpha models from the comparison stage.')} ", unsafe_allow_html=True)
         visible = [c for c in ["mean_sharpe", "mean_rank_ic", "projected_backtest_sharpe", "projected_total_return"] if c in model_summary.columns]
         if visible:
-            st.dataframe(model_summary[visible].head(8).round(4), use_container_width=True)
+            st.dataframe(model_summary[visible].head(8).round(4), width="stretch")
 
     if not readiness.empty and "passed" in readiness.columns:
         failed = readiness.loc[~readiness["passed"].astype(bool)]
@@ -308,7 +307,7 @@ def overview_page(data: dict[str, pd.DataFrame | Path]) -> None:
                 f"### {hover_text('Current Blockers', 'The checks currently preventing RL deployment or signaling where the chosen strategy is weak.')}",
                 unsafe_allow_html=True,
             )
-            st.dataframe(failed[["check", "value", "detail"]], use_container_width=True)
+            st.dataframe(failed[["check", "value", "detail"]], width="stretch")
 
 
 def portfolio_page(data: dict[str, pd.DataFrame | Path]) -> None:
@@ -331,10 +330,10 @@ def portfolio_page(data: dict[str, pd.DataFrame | Path]) -> None:
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("Selected Strategy Weights")
-        st.dataframe(latest_signal.sort_values(ascending=False).to_frame("weight"), use_container_width=True)
+        st.dataframe(latest_signal.sort_values(ascending=False).to_frame("weight"), width="stretch")
     with col2:
         st.subheader("RL Weights")
-        st.dataframe(latest_rl.sort_values(ascending=False).to_frame("weight"), use_container_width=True)
+        st.dataframe(latest_rl.sort_values(ascending=False).to_frame("weight"), width="stretch")
 
     history = pd.concat(
         [
@@ -357,11 +356,11 @@ def portfolio_page(data: dict[str, pd.DataFrame | Path]) -> None:
         )
     fig.update_layout(title="30-Day Weight History", height=420, legend_title_text="Asset / Source")
     fig.update_layout(height=420)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     rl_backtest = data["rl_backtest"]
     drawdown = float(rl_backtest["drawdown"].iloc[-1]) if not rl_backtest.empty and "drawdown" in rl_backtest.columns else 0.0
-    st.plotly_chart(build_drawdown_gauge(drawdown), use_container_width=True)
+    st.plotly_chart(build_drawdown_gauge(drawdown), width="stretch")
 
 
 def backtest_page(data: dict[str, pd.DataFrame | Path]) -> None:
@@ -387,7 +386,7 @@ def backtest_page(data: dict[str, pd.DataFrame | Path]) -> None:
             fig.add_trace(go.Scatter(x=equity.index, y=equity[column], mode="lines", name=column))
         fig.update_layout(title="Equity Curves", height=420, legend_title_text="Series")
         fig.update_layout(height=420)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     table = pd.DataFrame()
     if not perf.empty:
@@ -396,12 +395,12 @@ def backtest_page(data: dict[str, pd.DataFrame | Path]) -> None:
         table = pd.concat([table, comparison], axis=0, sort=False)
     if not table.empty:
         st.subheader("Performance Summary")
-        st.dataframe(table, use_container_width=True)
+        st.dataframe(table, width="stretch")
 
     regime_perf = data["regime_performance"]
     if not regime_perf.empty:
         st.subheader("Regime-Conditional Performance")
-        st.dataframe(regime_perf, use_container_width=True)
+        st.dataframe(regime_perf, width="stretch")
 
 
 def diagnostics_page(data: dict[str, pd.DataFrame | Path]) -> None:
@@ -415,7 +414,7 @@ def diagnostics_page(data: dict[str, pd.DataFrame | Path]) -> None:
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=diag.index, y=diag["ic"], mode="lines", name="IC"))
         fig.update_layout(title="Information Coefficient Time Series", height=350)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -429,7 +428,7 @@ def diagnostics_page(data: dict[str, pd.DataFrame | Path]) -> None:
                 )
             )
             fig.update_layout(title="IC by Regime", height=350)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
     with col2:
         if not model_summary.empty and {"backtest_sharpe", "benchmark_sharpe_SPY"}.issubset(model_summary.columns):
             labels = model_summary.index.astype(str).tolist()
@@ -443,7 +442,7 @@ def diagnostics_page(data: dict[str, pd.DataFrame | Path]) -> None:
                 )
             )
             fig.update_layout(title="Signal vs Benchmark Sharpe", height=350)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
     if not strategy_backtest.empty and {"benchmark_return", "strategy_return"}.issubset(strategy_backtest.columns):
         fig = go.Figure(
@@ -455,12 +454,12 @@ def diagnostics_page(data: dict[str, pd.DataFrame | Path]) -> None:
             )
         )
         fig.update_layout(title="Daily Signal vs Benchmark Scatter", height=350)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     if not readiness.empty:
         st.subheader("Readiness Report")
         cols = [c for c in ["check", "passed", "value", "detail"] if c in readiness.columns]
-        st.dataframe(readiness[cols], use_container_width=True)
+        st.dataframe(readiness[cols], width="stretch")
 
 
 def regime_page(data: dict[str, pd.DataFrame | Path]) -> None:
@@ -472,8 +471,8 @@ def regime_page(data: dict[str, pd.DataFrame | Path]) -> None:
 
     regime, prob, latest = current_regime_block(regime_probs)
     st.metric("Current Regime", regime, f"{prob:.1%}")
-    st.plotly_chart(build_regime_area_chart(regime_probs), use_container_width=True)
-    st.plotly_chart(build_transition_heatmap(transition_matrix), use_container_width=True)
+    st.plotly_chart(build_regime_area_chart(regime_probs), width="stretch")
+    st.plotly_chart(build_transition_heatmap(transition_matrix), width="stretch")
 
 
 def main() -> None:
