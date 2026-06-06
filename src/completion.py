@@ -35,6 +35,9 @@ class ProjectCompletionChecker:
         "performance_report.parquet",
         "backtest_results.parquet",
         "position_weights.parquet",
+        "alpha_sleeve_position_weights.parquet",
+        "allocation_exposure.parquet",
+        "allocation_policy.parquet",
         "stress_report.parquet",
     )
     REQUIRED_REGIME_ARTIFACTS = (
