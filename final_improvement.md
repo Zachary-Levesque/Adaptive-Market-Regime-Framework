@@ -34,25 +34,26 @@ Make AMRF a finished research product that:
 
 ## Current State
 
-The project is not broken. It is partially complete and technically usable.
+The project is no longer blocked by the benchmark gap described in the original review. The regime-aware alpha/SPY blend now clears the SPY Sharpe gate, the readiness report passes, and the completion checker reports the project as complete.
 
 What already works:
 - The data refresh path works with the new archive.
 - Phase 1, regime detection, alpha comparison, risk backtesting, and the dashboard all run.
-- The UI is readable and now has hover help on the main overview metrics.
+- The UI is readable, has hover help on the main overview metrics, and surfaces the allocation policy.
 - The completion checker reports the project as complete.
+- The selected portfolio beats SPY on Sharpe in the saved full-window backtest.
 
 What still matters:
-- The selected standalone strategy still does not beat SPY on Sharpe in the current readiness report.
-- RL readiness remains advisory-blocked for benchmark reasons.
-- The current alpha sleeve is good enough to be useful, but not strong enough by itself to be the final deployable portfolio.
+- The standalone alpha sleeve should still be distinguished from the deployable blended portfolio.
+- RL should be evaluated as a downstream allocator only if it improves the blended portfolio after costs.
+- Future changes should keep the allocation rule simple and auditable.
 
 ## Deep Review Findings
 
 ### 1. The edge is real, but it is not concentrated enough
-The current strategy has higher total return than SPY, but also higher volatility and deeper drawdowns.
+Pre-implementation, the standalone strategy had higher total return than SPY, but also higher volatility and deeper drawdowns.
 
-Observed full-sample profile:
+Original observed full-sample profile:
 - Strategy annual return: about 17.0%
 - Strategy Sharpe: about 0.93
 - Strategy max drawdown: about -42.9%
