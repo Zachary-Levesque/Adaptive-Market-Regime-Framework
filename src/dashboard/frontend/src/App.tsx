@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
   Area,
-  AreaChart,
   CartesianGrid,
+  ComposedChart,
   Line,
   ResponsiveContainer,
   Tooltip,
@@ -161,7 +161,7 @@ export default function App() {
   }
 
   return (
-    <main className="min-h-screen bg-[#f6f8fb] text-slate-950">
+    <main className="min-h-screen overflow-x-hidden bg-[#f6f8fb] text-slate-950">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
         <Header
           lastUpdated={lastUpdated}
@@ -213,12 +213,12 @@ function Header({
 }) {
   return (
     <header className="flex flex-col gap-4 rounded-[28px] border border-white/80 bg-white/90 p-5 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur sm:flex-row sm:items-center sm:justify-between">
-      <div className="min-w-0">
+      <div className="min-w-0 max-w-full">
         <div className="mb-2 flex items-center gap-2 text-sm font-medium text-slate-500">
           <Sparkles className="h-4 w-4 text-blue-600" aria-hidden="true" />
           Research dashboard
         </div>
-        <h1 className="text-balance text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">
+        <h1 className="max-w-full text-balance text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">
           Adaptive Market Regime Framework
         </h1>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
@@ -226,8 +226,8 @@ function Header({
         </p>
       </div>
 
-      <div className="flex flex-col gap-3 sm:items-end">
-        <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+      <div className="flex min-w-0 flex-col gap-3 sm:items-end">
+        <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
           <Clock3 className="h-4 w-4 text-slate-500" aria-hidden="true" />
           <span>{lastUpdated ? `Updated ${formatTime(lastUpdated)}` : 'Awaiting refresh'}</span>
         </div>
@@ -235,7 +235,7 @@ function Header({
           type="button"
           onClick={onRefresh}
           disabled={refreshing}
-          className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+          className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
           aria-label="Refresh dashboard data"
         >
           {refreshing ? (
@@ -343,7 +343,7 @@ function EquityCurveCard({ performance }: { performance: Performance[] }) {
       {performance.length ? (
         <div className="mt-5 h-[360px] w-full sm:h-[430px]">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={performance} margin={{ top: 12, right: 18, bottom: 0, left: 0 }}>
+            <ComposedChart data={performance} margin={{ top: 12, right: 18, bottom: 0, left: 0 }}>
               <defs>
                 <linearGradient id="strategyFill" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#2563eb" stopOpacity={0.24} />
@@ -363,6 +363,10 @@ function EquityCurveCard({ performance }: { performance: Performance[] }) {
                 axisLine={false}
                 tickLine={false}
                 width={52}
+                domain={[
+                  (dataMin: number) => Math.max(0, Math.floor(dataMin - 1)),
+                  (dataMax: number) => Math.ceil(dataMax + 1),
+                ]}
                 tick={{ fill: '#64748b', fontSize: 12 }}
                 tickFormatter={(value) => `${Number(value).toFixed(1)}x`}
               />
@@ -387,6 +391,7 @@ function EquityCurveCard({ performance }: { performance: Performance[] }) {
                 strokeWidth={2.5}
                 fill="url(#strategyFill)"
                 dot={false}
+                isAnimationActive={false}
                 activeDot={{ r: 4 }}
               />
               <Line
@@ -396,8 +401,9 @@ function EquityCurveCard({ performance }: { performance: Performance[] }) {
                 strokeWidth={2}
                 strokeDasharray="6 6"
                 dot={false}
+                isAnimationActive={false}
               />
-            </AreaChart>
+            </ComposedChart>
           </ResponsiveContainer>
         </div>
       ) : (
