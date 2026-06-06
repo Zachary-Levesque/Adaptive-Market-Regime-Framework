@@ -227,17 +227,12 @@ This project should be considered finished only when all of the following are tr
 - The RL layer is evaluated only after the base portfolio is strong.
 - The dashboard makes the state of the system obvious to a new user in under a minute.
 
-## What I Would Do Next Tomorrow
+## Remaining Follow-Up
 
-1. Implement regime-aware blending between the alpha sleeve and SPY.
-2. Evaluate it out of sample.
-3. Compare it against the current selected strategy and current readiness gate.
-4. Keep the best blend only if it beats SPY after costs.
-5. Rerun diagnostics and readiness.
-6. Update the dashboard to show the blend logic clearly.
+1. Re-evaluate RL against the improved blended portfolio, not against the older standalone alpha sleeve.
+2. Keep RL only if it improves realized after-cost performance.
+3. Continue treating the deterministic blend as the production baseline until RL proves incremental value.
 
 ## Bottom Line
 
-The project is not far from being a strong research product.
-The missing piece is not another generic model.
-The missing piece is a regime-aware portfolio allocation layer that converts the existing alpha into a benchmark-beating portfolio.
+The core project target is now met: the existing alpha is converted into a benchmark-beating, regime-aware portfolio. The remaining work is optional RL validation, not a blocker for the base research product.
