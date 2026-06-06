@@ -1,5 +1,28 @@
 # Final Improvement Plan
 
+## Implementation Status
+
+Implemented on the current artifact snapshot:
+
+- Added a deterministic regime-aware allocation layer between the selected alpha sleeve and SPY.
+- Saved auditable allocation artifacts:
+  - `data/results/allocation_policy.parquet`
+  - `data/results/allocation_exposure.parquet`
+  - `data/results/alpha_sleeve_position_weights.parquet`
+- Rebuilt Phase 4, diagnostics, readiness, and completion reports.
+- Current strategy Sharpe is `1.0866` versus SPY Sharpe `0.9500`.
+- Current max drawdown is `-20.73%` versus SPY max drawdown `-31.18%`.
+- RL readiness now passes all checks.
+
+Current allocation policy:
+
+| Regime | Alpha Sleeve | SPY Sleeve |
+|---|---:|---:|
+| 0 | 0% | 100% |
+| 1 | 25% | 75% |
+| 2 | 25% | 75% |
+| 3 | 75% | 25% |
+
 ## Goal
 Make AMRF a finished research product that:
 
