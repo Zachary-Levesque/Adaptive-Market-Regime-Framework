@@ -48,6 +48,12 @@ class PerformanceMetrics(BaseModel):
     win_rate: float
     annual_return: float
 
+class AllocationPolicyRow(BaseModel):
+    regime: str
+    alpha_exposure: float
+    benchmark: str
+    benchmark_exposure: float
+
 def load_parquet_safe(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Data file not found: {path}")
@@ -144,6 +150,26 @@ async def get_risk_metrics():
 async def get_readiness():
     report = load_parquet_safe(PROCESSED_DIR / "alpha_readiness_report.parquet")
     return report.to_dict(orient="records")
+
+@app.get("/api/allocation/policy")
+async def get_allocation_policy():
+    policy = load_parquet_safe(RESULTS_DIR / "allocation_policy.parquet")
+    return policy.to_dict(orient="records")
+
+@app.get("/api/allocation/current")
+async def get_current_allocation():
+    exposure = load_parquet_safe(RESULTS_DIR / "allocation_exposure.parquet")
+    if exposure.empty:
+        raise HTTPException(status_code=404, detail="Allocation exposure is empty")
+
+    latest = exposure.iloc[-1]
+    index_value = exposure.index[-1]
+    date_value = index_value.isoformat() if hasattr(index_value, "isoformat") else str(index_value)
+    return {
+        "date": date_value,
+        "alpha_exposure": float(latest.get("alpha_exposure", 0.0)),
+        "benchmark_exposure": float(latest.get("benchmark_exposure", 0.0)),
+    }
 
 if __name__ == "__main__":
     import uvicorn
