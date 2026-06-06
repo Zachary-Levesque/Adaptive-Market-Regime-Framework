@@ -66,6 +66,8 @@ def test_backtester_saves_outputs(tmp_path):
     assert (tmp_path / "backtest_results.parquet").exists()
     assert (tmp_path / "performance_report.parquet").exists()
     assert (tmp_path / "position_weights.parquet").exists()
+    assert (tmp_path / "alpha_sleeve_position_weights.parquet").exists()
+    assert (tmp_path / "allocation_exposure.parquet").exists()
     assert (tmp_path / "regime_performance.parquet").exists()
     assert (tmp_path / "stress_report.parquet").exists()
 
@@ -292,3 +294,41 @@ def test_backtester_caps_single_position_weight():
 
     assert weights.abs().max().max() <= 0.10
     assert np.isclose(weights.loc[index[0]].abs().sum(), 0.40)
+
+
+def test_backtester_regime_blend_adds_lagged_benchmark_exposure():
+    index = pd.date_range("2024-01-01", periods=4, freq="B")
+    returns = pd.DataFrame(
+        {
+            "A": [0.0, 0.10, 0.10, 0.10],
+            "SPY": [0.0, 0.01, 0.01, 0.01],
+        },
+        index=index,
+    )
+    signals = pd.DataFrame({"A": [1.0, 1.0, 1.0, 1.0], "SPY": [0.0, 0.0, 0.0, 0.0]}, index=index)
+    regimes = pd.DataFrame({"regime": [0, 0, 1, 1]}, index=index)
+
+    artifacts = AMRFBacktester(
+        returns=returns,
+        alpha_signals=signals,
+        regime_labels=regimes,
+        config=BacktestConfig(
+            long_fraction=0.5,
+            short_fraction=0.0,
+            transaction_cost_bps=0.0,
+            benchmark="SPY",
+            benchmark_blend_enabled=True,
+            benchmark_blend_default_alpha_exposure=1.0,
+            benchmark_blend_regime_exposures={"0": 0.25, "1": 0.75},
+        ),
+    ).run()
+
+    assert np.isclose(artifacts.allocation_exposure.loc[index[0], "alpha_exposure"], 0.25)
+    assert np.isclose(artifacts.allocation_exposure.loc[index[2], "alpha_exposure"], 0.75)
+    assert np.isclose(artifacts.weights.loc[index[1], "A"], 0.25)
+    assert np.isclose(artifacts.weights.loc[index[1], "SPY"], 0.75)
+    assert np.isclose(artifacts.weights.loc[index[3], "A"], 0.75)
+    assert np.isclose(artifacts.weights.loc[index[3], "SPY"], 0.25)
+    assert np.isclose(artifacts.daily_results.loc[index[1], "alpha_exposure"], 0.25)
+    assert np.isclose(artifacts.daily_results.loc[index[3], "alpha_exposure"], 0.75)
+    assert not artifacts.allocation_policy.empty
