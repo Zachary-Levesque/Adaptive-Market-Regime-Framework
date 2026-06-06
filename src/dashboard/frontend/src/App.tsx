@@ -3,7 +3,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area,
 } from 'recharts';
 import { 
-  Activity, Shield, AlertTriangle, TrendingUp, Clock, CheckCircle, XCircle, Info,
+  Activity, Shield, AlertTriangle, TrendingUp, Clock, CheckCircle, XCircle,
   RefreshCw
 } from 'lucide-react';
 
