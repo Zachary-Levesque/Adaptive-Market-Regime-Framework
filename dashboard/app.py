@@ -39,6 +39,8 @@ def load_dashboard_data() -> dict[str, pd.DataFrame | Path]:
         "rl_comparison": load_frame(str(config.rl.comparison_path)),
         "strategy_backtest": load_frame(str(config.risk.output_dir / "backtest_results.parquet")),
         "performance_report": load_frame(str(config.risk.output_dir / "performance_report.parquet")),
+        "allocation_exposure": load_frame(str(config.risk.output_dir / "allocation_exposure.parquet")),
+        "allocation_policy": load_frame(str(config.risk.output_dir / "allocation_policy.parquet")),
         "regime_performance": load_frame(str(config.risk.output_dir / "regime_performance.parquet")),
         "alpha_diag": load_frame(str(config.alpha.diagnostics_path)),
         "alpha_diag_regime": load_frame(str(config.alpha.diagnostics_path.with_name("alpha_diagnostics_by_regime.parquet"))),
@@ -188,11 +190,18 @@ def overview_page(data: dict[str, pd.DataFrame | Path]) -> None:
     rl_backtest = data["rl_backtest"]
     strategy_backtest = data["strategy_backtest"]
     model_summary = data["alpha_model_summary"]
+    allocation_exposure = data["allocation_exposure"]
+    allocation_policy = data["allocation_policy"]
 
     current_regime, regime_prob, _ = current_regime_block(regime_probs)
     selected_model = selected_model_name(selection)
     status, status_detail = readiness_status(readiness)
     latest_date = latest_index_date(regime_probs, selected_signal, strategy_backtest, rl_backtest)
+    latest_alpha_exposure = (
+        float(allocation_exposure["alpha_exposure"].dropna().iloc[-1])
+        if not allocation_exposure.empty and "alpha_exposure" in allocation_exposure.columns and allocation_exposure["alpha_exposure"].notna().any()
+        else None
+    )
 
     strategy_row = performance.loc["strategy"] if not performance.empty and "strategy" in performance.index else pd.Series(dtype=float)
     spy_row = performance.loc["SPY"] if not performance.empty and "SPY" in performance.index else pd.Series(dtype=float)
@@ -260,6 +269,31 @@ def overview_page(data: dict[str, pd.DataFrame | Path]) -> None:
             f"{abs(float(strategy_row.get('max_drawdown', 0.0))):.2%}",
             "Largest peak-to-trough decline in the selected strategy’s equity curve.",
         )
+
+    if latest_alpha_exposure is not None:
+        st.markdown("### Portfolio Allocation")
+        alloc_cols = st.columns(3)
+        metric_block(
+            alloc_cols[0],
+            "Alpha Sleeve",
+            f"{latest_alpha_exposure:.0%}",
+            "Current portfolio exposure assigned to the selected alpha sleeve after the regime-aware allocation rule.",
+        )
+        metric_block(
+            alloc_cols[1],
+            "SPY Sleeve",
+            f"{1.0 - latest_alpha_exposure:.0%}",
+            "Current portfolio exposure assigned to SPY by the regime-aware allocation rule.",
+        )
+        if not allocation_policy.empty:
+            metric_block(
+                alloc_cols[2],
+                "Allocation Rule",
+                "Regime Blend",
+                "The portfolio layer blends the alpha sleeve with SPY using explicit regime exposure settings.",
+            )
+            visible = [c for c in ["regime", "alpha_exposure", "benchmark", "benchmark_exposure"] if c in allocation_policy.columns]
+            st.dataframe(allocation_policy[visible], use_container_width=True)
 
     if not model_summary.empty:
         st.markdown(f"### {hover_text('Selected Alpha Candidates', 'The highest-ranked alpha models from the comparison stage.')} ", unsafe_allow_html=True)
