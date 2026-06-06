@@ -1,4 +1,4 @@
-# AMRF — Adaptive Market Regime Framework
+# AMRF: Adaptive Market Regime Framework
 
 AMRF is a completed quantitative research system that detects market regimes, selects regime-aware alpha signals, converts them into a risk-managed portfolio, and presents the result in a polished dashboard.
 
