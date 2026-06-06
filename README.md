@@ -4,8 +4,6 @@ AMRF is a completed quantitative research system that detects market regimes, se
 
 The project is designed to demonstrate end-to-end ability across quantitative finance, machine learning, backtesting, risk engineering, data pipelines, and product-grade dashboard development.
 
-> Research use only. This repository is not financial advice and is not a live trading system.
-
 ---
 
 ## What This Project Does
