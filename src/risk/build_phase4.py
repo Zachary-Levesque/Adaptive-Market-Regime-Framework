@@ -99,6 +99,9 @@ def main() -> None:
             volatility_lookback=config.risk.volatility_lookback,
             volatility_floor=config.risk.volatility_floor,
             max_position_weight=max_position_weight,
+            benchmark_blend_enabled=config.risk.benchmark_blend_enabled,
+            benchmark_blend_default_alpha_exposure=config.risk.benchmark_blend_default_alpha_exposure,
+            benchmark_blend_regime_exposures=config.risk.benchmark_blend_regime_exposures,
         ),
     )
     artifacts = backtester.run(start=args.start, end=args.end, stress_periods=config.risk.stress_periods)
