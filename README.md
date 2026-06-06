@@ -30,7 +30,7 @@ Implemented but still research-gated:
 1. PPO reinforcement-learning position sizing
 2. Intraday execution through Alpaca
 
-The current selected signal is `regime_portfolio_selector`. The project completion report now passes on the current artifacts, while the RL readiness gate remains a separate advisory report that can still flag benchmark-relative weakness in the selected signal.
+The current selected signal is `regime_portfolio_selector`, wrapped by a deterministic regime-aware allocation layer that blends the alpha sleeve with SPY. The project completion report and RL readiness gate now pass on the current artifacts.
 
 The repo now includes a one-command refresh-and-launch path via `./run_pipeline.sh`. It bootstraps a clean `.venv`, imports local Stooq data when available, rebuilds the artifacts, and launches the Streamlit dashboard. Rerun it whenever you want the saved artifacts refreshed to the latest available data source.
  
@@ -145,12 +145,21 @@ Current local artifact snapshot from `data/results/performance_report.parquet`:
 
 | Metric | AMRF Strategy | Buy & Hold SPY | Equal Weight | 63D Momentum |
 |---|---|---|---|---|
-| Annual Return | 17.32% | 13.34% | 11.75% | 8.11% |
-| Sharpe Ratio | 0.94 | 0.87 | 0.74 | 0.60 |
-| Sortino Ratio | 0.89 | 0.82 | 0.71 | 0.56 |
-| Calmar Ratio | 0.70 | 0.40 | 0.24 | 0.27 |
-| Max Drawdown | -24.82% | -33.73% | -49.19% | -30.31% |
-| Total Return | 16.44x | 8.41x | 6.30x | 3.04x |
+| Annual Return | 16.35% | 14.53% | 13.94% | 9.87% |
+| Sharpe Ratio | 1.09 | 0.95 | 0.85 | 0.70 |
+| Sortino Ratio | 1.04 | 0.90 | 0.81 | 0.67 |
+| Calmar Ratio | 0.79 | 0.47 | 0.28 | 0.35 |
+| Max Drawdown | -20.73% | -31.18% | -49.54% | -27.93% |
+| Total Return | 17.61x | 12.72x | 11.42x | 5.15x |
+
+Current regime allocation policy from `data/results/allocation_policy.parquet`:
+
+| Regime | Alpha Sleeve | SPY Sleeve |
+|---|---:|---:|
+| 0 | 0% | 100% |
+| 1 | 25% | 75% |
+| 2 | 25% | 75% |
+| 3 | 75% | 25% |
 
 Selected-signal diagnostics from `data/processed/alpha_diagnostics_by_regime.parquet`:
 
