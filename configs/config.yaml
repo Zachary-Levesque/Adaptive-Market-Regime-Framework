@@ -96,6 +96,13 @@ risk:
   volatility_lookback: 21
   volatility_floor: 0.005
   max_position_weight: 0.25
+  benchmark_blend_enabled: true
+  benchmark_blend_default_alpha_exposure: 0.25
+  benchmark_blend_regime_exposures:
+    0: 0.0
+    1: 0.25
+    2: 0.25
+    3: 0.75
   stress_periods:
     gfc: ["2008-09-01", "2009-03-31"]
     covid: ["2020-02-19", "2020-03-23"]
