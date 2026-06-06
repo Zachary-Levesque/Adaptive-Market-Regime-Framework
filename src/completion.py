@@ -227,11 +227,11 @@ class ProjectCompletionChecker:
         rows: list[dict[str, object]] = []
         dashboard_app = Path("dashboard/app.py")
         dashboard_requirements = Path("dashboard/requirements.txt")
-        dashboard_readme = Path("README_dashboard.md")
         for check, path, detail in [
             ("dashboard_app_saved", dashboard_app, "Streamlit dashboard must exist."),
             ("dashboard_requirements_saved", dashboard_requirements, "Dashboard requirements must exist."),
-            ("dashboard_readme_saved", dashboard_readme, "Dashboard README must exist."),
+            ("project_readme_saved", Path("README.md"), "Project README must exist."),
+            ("project_summary_saved", Path("SUMMARY.md"), "Project summary must exist."),
         ]:
             if path.exists():
                 rows.append(self._row(check, True, str(path), detail))
