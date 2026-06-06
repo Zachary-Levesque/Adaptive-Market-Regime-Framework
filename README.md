@@ -298,12 +298,6 @@ Validate inputs:
 
 ---
 
-## Trading Disclaimer
-
-AMRF is not a live trading bot and does not provide personalized financial advice. It is a research framework. Before any real-money usage, the system would need paper trading, broker integration hardening, monitoring, position limits, kill switches, compliance review, and operational risk controls.
-
----
-
 ## Research Influences
 
 - Hamilton, J.D. (1989). *A New Approach to the Economic Analysis of Nonstationary Time Series*
