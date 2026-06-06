@@ -48,6 +48,9 @@ def test_load_config_parses_data_paths(tmp_path: Path):
     assert config.risk.volatility_lookback == 21
     assert config.risk.volatility_floor == 0.005
     assert config.risk.max_position_weight == 1.0
+    assert config.risk.benchmark_blend_enabled is False
+    assert config.risk.benchmark_blend_default_alpha_exposure == 1.0
+    assert config.risk.benchmark_blend_regime_exposures == {}
 
 
 def test_load_config_resolves_today_tokens(tmp_path: Path):
