@@ -33,6 +33,9 @@ class BacktestConfig:
     volatility_lookback: int = 21
     volatility_floor: float = 0.005
     max_position_weight: float = 1.0
+    benchmark_blend_enabled: bool = False
+    benchmark_blend_default_alpha_exposure: float = 1.0
+    benchmark_blend_regime_exposures: dict[str, float] | None = None
 
 
 @dataclass
@@ -42,6 +45,9 @@ class BacktestArtifacts:
     regime_report: pd.DataFrame
     stress_report: pd.DataFrame
     weights: pd.DataFrame
+    alpha_weights: pd.DataFrame
+    allocation_exposure: pd.DataFrame
+    allocation_policy: pd.DataFrame
 
 
 class AMRFBacktester:
@@ -70,12 +76,22 @@ class AMRFBacktester:
         returns, signals = self._aligned_inputs(start=start, end=end)
         raw_weights = self.construct_signal_weights(signals, returns=returns)
         target_weights = self.apply_rebalance_schedule(raw_weights)
+        allocation_exposure = self._build_allocation_exposure(target_weights.index)
+        target_weights = self._apply_benchmark_blend(target_weights, allocation_exposure)
         applied_weights = target_weights.shift(1).reindex(returns.index).fillna(0.0)
+        applied_alpha_weights = raw_weights.pipe(self.apply_rebalance_schedule).shift(1).reindex(returns.index).fillna(0.0)
+        applied_exposure = allocation_exposure.shift(1).reindex(returns.index).fillna(
+            {
+                "alpha_exposure": 0.0,
+                "benchmark_exposure": 1.0,
+            }
+        )
         pnl_returns = returns.fillna(0.0)
         signal_coverage = signals.notna().mean(axis=1).reindex(returns.index).fillna(0.0)
         active_signal_count = signals.notna().sum(axis=1).reindex(returns.index).fillna(0).astype(int)
 
         gross_returns = (applied_weights * pnl_returns).sum(axis=1)
+        alpha_sleeve_gross_returns = (applied_alpha_weights * pnl_returns).sum(axis=1)
         turnover = applied_weights.diff().abs().sum(axis=1).fillna(applied_weights.abs().sum(axis=1))
         transaction_cost = turnover * (self.config.transaction_cost_bps / 10_000.0)
         strategy_returns = gross_returns - transaction_cost
@@ -91,10 +107,13 @@ class AMRFBacktester:
         daily_results = pd.DataFrame(
             {
                 "strategy_return_gross": gross_returns,
+                "alpha_sleeve_return_gross": alpha_sleeve_gross_returns,
                 "turnover": turnover,
                 "transaction_cost": transaction_cost,
                 "gross_exposure": applied_weights.abs().sum(axis=1),
                 "net_exposure": applied_weights.sum(axis=1),
+                "alpha_exposure": applied_exposure["alpha_exposure"],
+                "benchmark_blend_exposure": applied_exposure["benchmark_exposure"],
                 "signal_coverage": signal_coverage,
                 "active_signal_count": active_signal_count,
                 "strategy_return": strategy_returns,
@@ -131,6 +150,9 @@ class AMRFBacktester:
             regime_report=regime_report,
             stress_report=stress_report,
             weights=applied_weights,
+            alpha_weights=applied_alpha_weights,
+            allocation_exposure=allocation_exposure.reindex(returns.index),
+            allocation_policy=self._allocation_policy_frame(),
         )
 
     def construct_signal_weights(self, signals: pd.DataFrame, returns: pd.DataFrame | None = None) -> pd.DataFrame:
@@ -225,6 +247,12 @@ class AMRFBacktester:
         artifacts.daily_results.to_parquet(base / "backtest_results.parquet")
         artifacts.performance_report.to_parquet(base / "performance_report.parquet")
         artifacts.weights.to_parquet(base / "position_weights.parquet")
+        if not artifacts.alpha_weights.empty:
+            artifacts.alpha_weights.to_parquet(base / "alpha_sleeve_position_weights.parquet")
+        if not artifacts.allocation_exposure.empty:
+            artifacts.allocation_exposure.to_parquet(base / "allocation_exposure.parquet")
+        if not artifacts.allocation_policy.empty:
+            artifacts.allocation_policy.to_parquet(base / "allocation_policy.parquet")
         if not artifacts.regime_report.empty:
             artifacts.regime_report.to_parquet(base / "regime_performance.parquet")
         if not artifacts.stress_report.empty:
@@ -291,12 +319,79 @@ class AMRFBacktester:
         momentum_returns.name = "momentum_return"
         return momentum_returns
 
+    def _build_allocation_exposure(self, index: pd.Index) -> pd.DataFrame:
+        default_alpha = self._clamp_unit_interval(self.config.benchmark_blend_default_alpha_exposure)
+        exposure = pd.Series(default_alpha, index=index, dtype=float, name="alpha_exposure")
+        policy = self.config.benchmark_blend_regime_exposures or {}
+
+        if self.config.benchmark_blend_enabled and policy and self.regime_labels is not None:
+            aligned_regimes = self.regime_labels.reindex(index)
+            for regime_key, alpha_exposure in policy.items():
+                normalized_key = str(regime_key)
+                if normalized_key.startswith("regime_"):
+                    normalized_key = normalized_key.removeprefix("regime_")
+                try:
+                    regime_value = int(normalized_key)
+                except ValueError:
+                    continue
+                mask = aligned_regimes.eq(regime_value).fillna(False)
+                exposure.loc[mask] = self._clamp_unit_interval(alpha_exposure)
+
+        frame = pd.DataFrame({"alpha_exposure": exposure})
+        frame["benchmark_exposure"] = 1.0 - frame["alpha_exposure"]
+        return frame
+
+    def _apply_benchmark_blend(self, target_weights: pd.DataFrame, allocation_exposure: pd.DataFrame) -> pd.DataFrame:
+        if not self.config.benchmark_blend_enabled:
+            return target_weights
+
+        alpha_exposure = allocation_exposure["alpha_exposure"].reindex(target_weights.index).fillna(
+            self._clamp_unit_interval(self.config.benchmark_blend_default_alpha_exposure)
+        )
+        blended = target_weights.mul(alpha_exposure, axis=0)
+        benchmark_exposure = 1.0 - alpha_exposure
+        if self.config.benchmark in blended.columns:
+            blended[self.config.benchmark] = blended[self.config.benchmark].fillna(0.0) + benchmark_exposure
+        else:
+            blended[self.config.benchmark] = benchmark_exposure
+        return blended
+
+    def _allocation_policy_frame(self) -> pd.DataFrame:
+        policy = self.config.benchmark_blend_regime_exposures or {}
+        if not self.config.benchmark_blend_enabled:
+            return pd.DataFrame()
+
+        rows = [
+            {
+                "regime": str(regime),
+                "alpha_exposure": self._clamp_unit_interval(alpha_exposure),
+                "benchmark": self.config.benchmark,
+                "benchmark_exposure": 1.0 - self._clamp_unit_interval(alpha_exposure),
+            }
+            for regime, alpha_exposure in sorted(policy.items(), key=lambda item: str(item[0]))
+        ]
+        if not rows:
+            rows.append(
+                {
+                    "regime": "default",
+                    "alpha_exposure": self._clamp_unit_interval(self.config.benchmark_blend_default_alpha_exposure),
+                    "benchmark": self.config.benchmark,
+                    "benchmark_exposure": 1.0
+                    - self._clamp_unit_interval(self.config.benchmark_blend_default_alpha_exposure),
+                }
+            )
+        return pd.DataFrame(rows)
+
     @staticmethod
     def _normalize_frame(frame: pd.DataFrame) -> pd.DataFrame:
         normalized = frame.copy()
         normalized.index = pd.to_datetime(normalized.index).tz_localize(None)
         normalized = normalized.apply(pd.to_numeric, errors="coerce")
         return normalized.replace([np.inf, -np.inf], np.nan).sort_index()
+
+    @staticmethod
+    def _clamp_unit_interval(value: float) -> float:
+        return max(0.0, min(1.0, float(value)))
 
     def _side_weights(
         self,
