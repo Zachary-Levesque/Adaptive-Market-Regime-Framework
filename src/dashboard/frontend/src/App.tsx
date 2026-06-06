@@ -324,7 +324,11 @@ function MetricCard({
         >
           <Icon className="h-5 w-5" aria-hidden="true" />
         </div>
-        {badge ? <StatusPill tone="neutral">{badge}</StatusPill> : null}
+        {badge ? (
+          <div className="hidden sm:block">
+            <StatusPill tone="neutral">{badge}</StatusPill>
+          </div>
+        ) : null}
       </div>
       <p className="text-sm font-medium text-slate-500">{label}</p>
       <p className="mt-1 truncate text-2xl font-semibold tracking-tight text-slate-950">{value}</p>
