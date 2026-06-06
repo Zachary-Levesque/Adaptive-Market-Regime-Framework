@@ -68,8 +68,6 @@ This project demonstrates:
 - walk-forward model validation
 - signal diagnostics with IC, rank IC, hit rate, and regime-level performance
 - transaction-cost-aware backtesting
-- stress testing across GFC, COVID, and rate-hike windows
-- risk metrics including Sharpe, Sortino, Calmar, drawdown, win rate, and profit factor
 - deterministic portfolio construction and benchmark blending
 - reinforcement-learning infrastructure with PPO
 - execution simulation with costs and slippage
