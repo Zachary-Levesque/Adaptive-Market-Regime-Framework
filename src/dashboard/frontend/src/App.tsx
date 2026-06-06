@@ -162,7 +162,7 @@ export default function App() {
 
   return (
     <main className="min-h-screen overflow-x-hidden bg-[#f6f8fb] text-slate-950">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
+      <div className="mx-auto box-border flex w-full max-w-7xl flex-col gap-6 px-3 py-5 sm:px-6 lg:px-8 lg:py-8">
         <Header
           lastUpdated={lastUpdated}
           refreshing={refreshing}
@@ -212,22 +212,24 @@ function Header({
   onRefresh: () => void;
 }) {
   return (
-    <header className="flex flex-col gap-4 rounded-[28px] border border-white/80 bg-white/90 p-5 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur sm:flex-row sm:items-center sm:justify-between">
+    <header className="box-border flex w-full flex-col gap-4 rounded-[28px] border border-white/80 bg-white/90 p-5 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0 max-w-full">
         <div className="mb-2 flex items-center gap-2 text-sm font-medium text-slate-500">
           <Sparkles className="h-4 w-4 text-blue-600" aria-hidden="true" />
           Research dashboard
         </div>
-        <h1 className="max-w-full text-balance text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">
-          Adaptive Market Regime Framework
+        <h1 className="max-w-[19rem] text-balance text-[1.45rem] font-semibold leading-tight tracking-tight text-slate-950 sm:max-w-full sm:text-3xl">
+          Adaptive Market <br className="sm:hidden" />
+          <span className="sm:hidden">Regime Framework</span>
+          <span className="hidden sm:inline">Regime Framework</span>
         </h1>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+        <p className="mt-2 max-w-[19rem] text-sm leading-6 text-slate-600 sm:max-w-2xl">
           Regime state, portfolio allocation, risk quality, and readiness in one view.
         </p>
       </div>
 
       <div className="flex min-w-0 flex-col gap-3 sm:items-end">
-        <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+        <div className="inline-flex w-full max-w-full items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 sm:w-auto">
           <Clock3 className="h-4 w-4 text-slate-500" aria-hidden="true" />
           <span>{lastUpdated ? `Updated ${formatTime(lastUpdated)}` : 'Awaiting refresh'}</span>
         </div>
