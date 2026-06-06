@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area,
-  BarChart, Bar, Legend
 } from 'recharts';
 import { 
   Activity, Shield, AlertTriangle, TrendingUp, Clock, CheckCircle, XCircle, Info,
-  ArrowUpRight, ArrowDownRight, RefreshCw
+  RefreshCw
 } from 'lucide-react';
 
 interface RegimeData {
