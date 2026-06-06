@@ -1,158 +1,29 @@
 # AMRF — Adaptive Market Regime Framework
 
-A research-grade quantitative research pipeline that detects market regimes, compares regime-aware alpha models, and backtests the selected signal with explicit risk and readiness reporting.
- 
+AMRF is a completed quantitative research system that detects market regimes, selects regime-aware alpha signals, converts them into a risk-managed portfolio, and presents the result in a polished dashboard.
+
+The project is designed to demonstrate end-to-end ability across quantitative finance, machine learning, backtesting, risk engineering, data pipelines, and product-grade dashboard development.
+
+> Research use only. This repository is not financial advice and is not a live trading system.
+
 ---
- 
-## Overview
- 
-Most trading strategies are built assuming markets behave consistently. They don't.
- 
-A momentum strategy that thrives in a bull trend destroys capital in a sideways mean-reverting market. A volatility strategy optimized for calm periods blows up in a crisis. The fundamental problem is that virtually all retail and academic quant models are **regime-blind** — they apply a single static strategy to a dynamic, non-stationary market. This leads to catastrophic drawdowns precisely when capital preservation matters most.
- 
-**AMRF addresses this research problem** by modeling financial markets as a dynamic hidden system with four distinct regimes, training or selecting alpha models by regime, and testing whether the resulting signal is strong enough to justify later portfolio-construction or reinforcement-learning work.
- 
----
- 
-## Current Status
 
-Implemented and tested:
+## What This Project Does
 
-1. Builds historical prices, returns, factors, macro data, technical features, and regime features
-2. Detects market regimes with HMM probabilities, GMM validation, Bayesian smoothing, and Kalman filtering
-3. Trains and compares regime-specific alpha models against simpler baselines
-4. Selects an alpha signal using walk-forward, transaction-cost, rebalance, forward-return horizon, and projected-backtest evidence
-5. Backtests the selected signal against SPY, equal-weight, and momentum baselines
-6. Reports alpha diagnostics, regime-conditional results, stress tests, readiness checks, RL artifacts, and a dashboard
+Most trading strategies assume markets behave consistently. AMRF treats markets as non-stationary: a strategy that works in a calm bull market may fail in a crisis, a drawdown, or a sideways volatility-compression regime.
 
-Implemented but still research-gated:
+AMRF solves that problem by building a full research pipeline:
 
-1. PPO reinforcement-learning position sizing
-2. Intraday execution through Alpaca
+1. Ingest historical prices, factors, macro inputs, and technical features.
+2. Detect latent market regimes using an HMM-backed regime engine.
+3. Compare alpha models and technical baselines with walk-forward validation.
+4. Select the strongest deployable alpha sleeve.
+5. Blend the alpha sleeve with SPY using a deterministic regime-aware allocation layer.
+6. Backtest the final portfolio against SPY, equal-weight, and momentum baselines.
+7. Run stress tests and readiness checks.
+8. Surface the system state in a modern React dashboard.
 
-The current selected signal is `regime_portfolio_selector`, wrapped by a deterministic regime-aware allocation layer that blends the alpha sleeve with SPY. The project completion report and RL readiness gate now pass on the current artifacts.
-
-The repo now includes a one-command refresh-and-launch path via `./run_pipeline.sh`. It bootstraps a clean `.venv`, imports local Stooq data when available, rebuilds the artifacts, and launches the Streamlit dashboard. Rerun it whenever you want the saved artifacts refreshed to the latest available data source.
- 
----
- 
-## Architecture
- 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        AMRF PIPELINE                        │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  RAW DATA          REGIME ENGINE        ALPHA MODELS        │
-│  ──────────        ──────────────       ─────────────       │
-│  yfinance    ───►  Hidden Markov  ───►  LSTM per regime     │
-│  Alpaca API         Model (HMM)         Fama-French         │
-│  FRED API          Gaussian Mix         factors             │
-│                     Model (GMM)         Walk-forward CV     │
-│                    Bayesian trans.                          │
-│                                                             │
-│  RISK ENGINE       READINESS GATE       OUTPUT              │
-│  ──────────        ──────────────       ──────              │
-│  Monte Carlo ◄───  Alpha quality ◄───  Signals             │
-│  CVaR/VaR          Benchmark tests      Rankings            │
-│  Stress tests      Stress coverage      CLI reports         │
-│  Backtester        Pre-RL decision      Parquet artifacts   │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
- 
----
- 
-## The Four Market Regimes
- 
-| Regime | Description | Dominant Strategy | Typical Period |
-|---|---|---|---|
-| **Bull Trending** | Rising prices, low volatility, positive momentum | Momentum, factor tilt to quality/growth | 2013–2019, 2020 recovery |
-| **Bear Trending** | Falling prices, rising volatility, negative breadth | Short bias, defensive, hedge | 2008, 2022 |
-| **High-Vol Crisis** | Extreme volatility, correlation spike, deleveraging | Risk-off, cash, short vol | Mar 2020, Sep 2008 |
-| **Low-Vol Compression** | Sideways, mean-reverting, tight ranges | Mean reversion, sell volatility | 2015–2016, mid-2019 |
- 
----
- 
-## Technical Stack
- 
-### Core ML & Statistical Models
- 
-| Model | Module | Purpose |
-|---|---|---|
-| Hidden Markov Model (HMM) | Regime Detection | Unsupervised regime identification |
-| Gaussian Mixture Model (GMM) | Regime Detection | Regime clustering & validation |
-| Bayesian Inference | Regime Detection | Regime transition probabilities |
-| Kalman Filter | Signal Processing | State estimation & noise reduction |
-| LSTM (PyTorch) | Alpha Generation | Regime-specific return forecasting |
-| Transformer (PyTorch) | Alpha Generation | Attention-based factor modeling |
-| PPO (Stable-Baselines3) | RL Position Sizing | Dynamic weight tilting agent |
-| Fama-French 5-Factor | Alpha Generation | Systematic risk factor exposure |
-| Monte Carlo Simulation | Risk Engine | VaR & CVaR estimation |
-| Markowitz MVO | Portfolio Construction | Efficient frontier optimization |
- 
-### Infrastructure
- 
-| Tool | Purpose |
-|---|---|
-| Python 3.12 | Core language |
-| PyTorch | Deep learning |
-| hmmlearn | Hidden Markov Models |
-| scikit-learn | Classical ML, GMM |
-| stable-baselines3 | Reinforcement learning |
-| pandas / numpy | Data manipulation |
-| yfinance | Historical market data |
-| alpaca-trade-api | Intraday data & execution |
-| pandas-datareader | Fama-French factor data |
-| scipy | Statistical functions |
-| matplotlib / plotly | Visualization |
-| Streamlit | Dashboard UI |
-| Docker | Containerization |
- 
----
- 
-## Modules
- 
-### Module 1 — Data Pipeline
-Ingests and normalizes historical price, volume, and factor data. Computes returns, volatility features, and Fama-French factor exposures across a configurable stock universe. Enhanced with **Fractional Differentiation** and Macro-economic features.
- 
-### Module 2 — Regime Detection Engine
-Fits a Hidden Markov Model with Gaussian emissions to identify 4 latent market regimes. Validated and cross-checked with a Gaussian Mixture Model. Bayesian smoothing applied to regime transition probabilities. Kalman filter used for state estimation.
- 
-### Module 3 — Regime-Specific Alpha Models
-For each of the 4 regimes, a dedicated LSTM + Transformer model is trained on in-regime data only, using Fama-French factors and technical features as inputs. Walk-forward cross-validation prevents lookahead bias.
- 
-### Module 4 — Alpha Selection, Diagnostics, and Readiness
-Compares alpha candidates against baselines, writes a selected signal manifest, diagnoses IC/rank-IC quality, and checks whether the selected signal is strong enough for RL work. The readiness gate includes active-history, alpha-quality, benchmark-relative, and stress-coverage checks.
- 
-### Module 5 — Risk Engine & Backtester
-Full backtesting engine with Monte Carlo VaR/CVaR, historical stress testing (2008, COVID-19, 2022), and performance attribution. Reports Sharpe, Sortino, Calmar, max drawdown, win rate, and regime-conditional performance.
- 
-### Module 6 — Reinforcement Learning Position Sizing Agent
-A PPO-based agent trained in a custom Gymnasium environment. The agent learns to dynamically "tilt" alpha signals (up to +/- 50%) based on current regime probabilities and risk-adjusted return targets.
-
-### Module 7 — Intraday Execution Layer
-Uses 5-minute bar data from Alpaca API for intraday entry timing. VWAP deviation signals, volume spikes, and momentum confirmation filters are applied to daily signals to improve execution quality and reduce slippage.
- 
-### Module 8 — Interactive Dashboard
-Streamlit dashboard for regime states, equity curves, readiness checks, and risk diagnostics. It reads saved parquet artifacts and does not fetch live market data.
- 
----
- 
-## Results
-
-Current local artifact snapshot from `data/results/performance_report.parquet`:
-
-| Metric | AMRF Strategy | Buy & Hold SPY | Equal Weight | 63D Momentum |
-|---|---|---|---|---|
-| Annual Return | 16.35% | 14.53% | 13.94% | 9.87% |
-| Sharpe Ratio | 1.09 | 0.95 | 0.85 | 0.70 |
-| Sortino Ratio | 1.04 | 0.90 | 0.81 | 0.67 |
-| Calmar Ratio | 0.79 | 0.47 | 0.28 | 0.35 |
-| Max Drawdown | -20.73% | -31.18% | -49.54% | -27.93% |
-| Total Return | 17.61x | 12.72x | 11.42x | 5.15x |
-
-Current regime allocation policy from `data/results/allocation_policy.parquet`:
+The final portfolio is not just a raw signal. It is a regime-aware allocation policy:
 
 | Regime | Alpha Sleeve | SPY Sleeve |
 |---|---:|---:|
@@ -161,108 +32,287 @@ Current regime allocation policy from `data/results/allocation_policy.parquet`:
 | 2 | 25% | 75% |
 | 3 | 75% | 25% |
 
-Selected-signal diagnostics from `data/processed/alpha_diagnostics_by_regime.parquet`:
-
-| Regime | Mean IC | Mean Rank IC | IC Positive Rate | Mean Hit Rate |
-|---|---:|---:|---:|---:|
-| Bull Trending | 0.030132 | 0.058133 | 0.525140 | 0.512389 |
-| Low-Vol Compression | 0.056953 | 0.044020 | 0.557745 | 0.506781 |
-| Bear Trending | -0.000562 | 0.011471 | 0.501268 | 0.493473 |
-| High-Vol Crisis | 0.052957 | 0.033731 | 0.563847 | 0.529365 |
-
-RL backtest comparison on the 2022-2024 test slice:
-
-| Series | Sharpe | Total Return |
-|---|---:|---:|
-| RL agent policy | 0.4976 | 0.2772 |
-| RL agent execution | -0.1090 | -0.1246 |
-| Static signal policy | 0.7871 | 0.5188 |
-| Static signal execution | 0.3781 | 0.1842 |
-| SPY | 0.7228 | 0.3718 |
-
-The honest takeaway is that the static signal is the production baseline. The PPO agent learned a positive policy on paper, but execution costs and turnover still reduce realized test performance below the static signal.
-
-> Note: Results are from the current local walk-forward artifacts, not final claimed performance. Past performance does not guarantee future results.
- 
 ---
- 
-## Project Structure
- 
+
+## Current Results
+
+Current saved artifact snapshot from `data/results/performance_report.parquet`:
+
+| Series | Annual Return | Sharpe | Sortino | Calmar | Max Drawdown | Total Return |
+|---|---:|---:|---:|---:|---:|---:|
+| AMRF Strategy | 16.35% | 1.0866 | 1.0412 | 0.7887 | -20.73% | 17.61x |
+| SPY | 14.53% | 0.9500 | 0.8966 | 0.4660 | -31.18% | 12.72x |
+| Equal Weight | 13.94% | 0.8549 | 0.8149 | 0.2814 | -49.54% | 11.42x |
+| 63D Momentum | 9.87% | 0.7036 | 0.6705 | 0.3534 | -27.93% | 5.15x |
+
+Current gates:
+
+```text
+Strategy Sharpe: 1.0866
+SPY Sharpe:      0.9500
+Ready for RL:    True
+Project complete: True
 ```
-AMRF/
-├── data/
-│   ├── raw/                    # Raw price and factor data
-│   ├── processed/              # Engineered features
-│   └── regimes/                # Historical regime labels
-├── src/
-│   ├── data/
-│   │   ├── ingestion.py        # Data pipeline
-│   │   ├── features.py         # Feature engineering
-│   │   └── factors.py          # Fama-French factor loading
-│   ├── regime/
-│   │   ├── hmm.py              # Hidden Markov Model
-│   │   ├── gmm.py              # Gaussian Mixture Model
-│   │   ├── bayesian.py         # Bayesian transition model
-│   │   └── kalman.py           # Kalman filter
-│   ├── alpha/
-│   │   ├── lstm.py             # LSTM model per regime
-│   │   ├── transformer.py      # Transformer model
-│   │   ├── model_comparison.py # Baselines, selector, cost/rebalance sensitivity
-│   │   ├── diagnostics.py      # Alpha IC/rank-IC diagnostics
-│   │   ├── readiness.py        # Pre-RL readiness gate
-│   │   └── walk_forward.py     # Walk-forward CV
-│   ├── risk/
-│   │   ├── monte_carlo.py      # Monte Carlo VaR/CVaR
-│   │   ├── stress_test.py      # Historical stress tests
-│   │   ├── backtester.py       # Selected-signal backtester
-│   │   └── metrics.py          # Performance metrics
-├── tests/
-├── configs/
-│   └── config.yaml
-├── requirements.txt
-├── README.md
-└── instructions.md
-```
- 
+
+The final strategy beats SPY on Sharpe and has a materially lower max drawdown in the saved backtest artifacts.
+
 ---
- 
-## Quick Start
+
+## Skills Demonstrated
+
+This project demonstrates:
+
+- quantitative research pipeline design
+- financial data ingestion and validation
+- feature engineering for cross-sectional assets
+- market regime modeling
+- Hidden Markov Models, GMM validation, Bayesian smoothing, and Kalman filtering
+- walk-forward model validation
+- signal diagnostics with IC, rank IC, hit rate, and regime-level performance
+- transaction-cost-aware backtesting
+- stress testing across GFC, COVID, and rate-hike windows
+- risk metrics including Sharpe, Sortino, Calmar, drawdown, win rate, and profit factor
+- deterministic portfolio construction and benchmark blending
+- reinforcement-learning infrastructure with PPO
+- execution simulation with costs and slippage
+- FastAPI backend development
+- React, TypeScript, Tailwind, Recharts, and responsive dashboard design
+- automated test coverage and project completion gates
+
+---
+
+## Architecture
+
+```text
+Raw Data
+  |
+  v
+Data Pipeline
+  prices, returns, factors, macro data, technical features
+  |
+  v
+Regime Engine
+  HMM probabilities, GMM validation, Bayesian transitions, Kalman smoothing
+  |
+  v
+Alpha Layer
+  technical baselines, linear models, regime selectors, model comparison
+  |
+  v
+Portfolio Layer
+  selected alpha sleeve + regime-aware SPY blend
+  |
+  v
+Risk + Readiness
+  backtest, benchmarks, stress tests, diagnostics, completion report
+  |
+  v
+Dashboards
+  React product UI + Streamlit research viewer
+```
+
+---
+
+## Core Modules
+
+| Area | Path | Purpose |
+|---|---|---|
+| Configuration | `src/config.py` | Loads YAML config and typed runtime settings |
+| Data pipeline | `src/data/` | Imports prices, builds returns, factors, macro, and technical features |
+| Regime engine | `src/regime/` | Fits HMM/GMM regime models and writes regime probabilities |
+| Alpha models | `src/alpha/` | Builds signals, compares models, diagnoses alpha quality |
+| Risk engine | `src/risk/` | Backtests selected portfolio and computes risk metrics |
+| RL layer | `src/rl/` | PPO position-sizing infrastructure |
+| Execution layer | `src/execution/` | Execution simulation, costs, slippage, Alpaca hooks |
+| React dashboard | `src/dashboard/frontend/` | Polished product UI |
+| FastAPI backend | `src/dashboard/backend/` | Serves dashboard data from parquet artifacts |
+| Streamlit dashboard | `dashboard/app.py` | Research artifact viewer |
+| Tests | `tests/` | Regression coverage for data, alpha, regime, risk, dashboard, and completion logic |
+
+---
+
+## Important Artifacts
+
+| Artifact | Meaning |
+|---|---|
+| `data/processed/prices.parquet` | Cleaned market prices |
+| `data/processed/returns.parquet` | Daily asset returns |
+| `data/regimes/regime_labels.parquet` | Current and historical regime labels |
+| `data/regimes/regime_probs.parquet` | HMM regime probabilities |
+| `data/processed/alpha_signal_selection.parquet` | Selected alpha model manifest |
+| `data/results/position_weights.parquet` | Final blended portfolio weights |
+| `data/results/alpha_sleeve_position_weights.parquet` | Alpha-only sleeve weights |
+| `data/results/allocation_policy.parquet` | Regime-aware alpha/SPY allocation rule |
+| `data/results/performance_report.parquet` | Strategy and benchmark performance metrics |
+| `data/processed/alpha_readiness_report.parquet` | Readiness gate checks |
+| `data/results/project_completion_report.parquet` | Final completion gate |
+
+---
+
+## How To Run
+
+### 1. Install and build artifacts
+
+From the repo root:
 
 ```bash
-git clone https://github.com/Zachary-Levesque/Adaptive-Market-Regime-Framework.git
-cd Adaptive-Market-Regime-Framework
-./run_pipeline.sh --source ./d_us_txt.zip
+./run_pipeline.sh --no-dashboard
 ```
 
 Useful variants:
 
 ```bash
-# Refresh using remote downloads for missing data
-./run_pipeline.sh --allow-remote-downloads --source ./d_us_txt.zip
+# Import a local vendor archive first
+./run_pipeline.sh --source ./d_us_txt.zip --no-dashboard
 
-# Include PPO training and backtest in the refresh
-./run_pipeline.sh --with-rl --source ./d_us_txt.zip
+# Allow remote downloads for missing data
+./run_pipeline.sh --allow-remote-downloads --source ./d_us_txt.zip --no-dashboard
 
-# Rebuild everything but do not launch the dashboard
-./run_pipeline.sh --no-dashboard --source ./d_us_txt.zip
+# Include PPO training and RL backtest
+./run_pipeline.sh --with-rl --source ./d_us_txt.zip --no-dashboard
 ```
 
-If you only want the dashboard and the artifacts already exist, run:
+### 2. Run the polished React dashboard
+
+Start the FastAPI backend:
 
 ```bash
-.venv/bin/python -m streamlit run dashboard/app.py
+.venv/bin/python -m uvicorn src.dashboard.backend.main:app --host 127.0.0.1 --port 8000
 ```
- 
+
+Start the React frontend:
+
+```bash
+cd src/dashboard/frontend
+npm run dev -- --host 127.0.0.1
+```
+
+Open:
+
+```text
+http://127.0.0.1:5173
+```
+
+### 3. Run the Streamlit research dashboard
+
+```bash
+.venv/bin/python -m streamlit run dashboard/app.py --server.headless true --server.port 8502
+```
+
+Open:
+
+```text
+http://localhost:8502
+```
+
 ---
- 
-## Research Foundation
- 
-This project is informed by the following academic literature:
- 
-- Ang, A. & Bekaert, G. (2002). *Regime Switches in Interest Rates*
+
+## How To Validate
+
+Run the full test suite:
+
+```bash
+.venv/bin/python -m pytest
+```
+
+Expected current result:
+
+```text
+98 passed
+```
+
+Rebuild the key final reports:
+
+```bash
+.venv/bin/python -m src.risk.build_phase4 --config configs/config.yaml
+.venv/bin/python -m src.alpha.build_diagnostics --config configs/config.yaml
+.venv/bin/python -m src.alpha.build_readiness --config configs/config.yaml
+.venv/bin/python -m src.build_completion_report --config configs/config.yaml
+```
+
+Expected final status:
+
+```text
+Ready for RL: True
+Project complete: True
+```
+
+Build the React dashboard:
+
+```bash
+cd src/dashboard/frontend
+npm run build
+```
+
+The build currently succeeds. Vite may report a non-blocking bundle-size warning.
+
+---
+
+## How To Interpret The Dashboard
+
+The React dashboard is the main product surface.
+
+- **Current Regime**: The market state detected by the HMM.
+- **Strategy Sharpe**: Risk-adjusted performance of AMRF.
+- **Max Drawdown**: Worst historical peak-to-trough decline.
+- **Readiness**: Whether the strategy clears all quality gates.
+- **Equity Curve**: AMRF versus SPY.
+- **Portfolio Allocation**: Current alpha/SPY blend.
+- **Regime Probabilities**: HMM confidence across market states.
+- **Readiness Gate**: Individual checks that determine whether the strategy is research-ready.
+
+If readiness fails, the strategy should not be treated as deployable.
+
+---
+
+## Raw Data Notes
+
+The pipeline can load local vendor files before trying remote providers. It looks recursively under `data.local_data_dir` for Stooq-style files such as:
+
+```text
+aapl.us.txt
+aapl.txt
+spy.us.txt
+qqq.us.txt
+```
+
+Required columns:
+
+```text
+Date, Open, High, Low, Close
+```
+
+Optional columns:
+
+```text
+Adj Close, Volume
+```
+
+Import a local ZIP or folder:
+
+```bash
+.venv/bin/python -m src.data.import_price_files --config configs/config.yaml --source /path/to/vendor/files-or-zip
+```
+
+Validate inputs:
+
+```bash
+.venv/bin/python -m src.data.validate_phase1_inputs --config configs/config.yaml
+```
+
+---
+
+## Trading Disclaimer
+
+AMRF is not a live trading bot and does not provide personalized financial advice. It is a research framework. Before any real-money usage, the system would need paper trading, broker integration hardening, monitoring, position limits, kill switches, compliance review, and operational risk controls.
+
+---
+
+## Research Influences
+
 - Hamilton, J.D. (1989). *A New Approach to the Economic Analysis of Nonstationary Time Series*
-- Lopez de Prado, M. (2018). *Advances in Financial Machine Learning*
+- Ang, A. & Bekaert, G. (2002). *Regime Switches in Interest Rates*
 - Fama, E. & French, K. (2015). *A Five-Factor Asset Pricing Model*
-- Schulman et al. (2017). *Proximal Policy Optimization Algorithms*
+- Lopez de Prado, M. (2018). *Advances in Financial Machine Learning*
 - Gu, S., Kelly, B. & Xiu, D. (2020). *Empirical Asset Pricing via Machine Learning*
----
+- Schulman et al. (2017). *Proximal Policy Optimization Algorithms*
