@@ -78,6 +78,9 @@ class RiskConfig:
     volatility_lookback: int
     volatility_floor: float
     max_position_weight: float
+    benchmark_blend_enabled: bool
+    benchmark_blend_default_alpha_exposure: float
+    benchmark_blend_regime_exposures: dict[str, float]
 
 
 @dataclass(frozen=True)
@@ -230,6 +233,14 @@ def load_config(path: str | Path) -> AppConfig:
             volatility_lookback=max(1, int(risk_section.get("volatility_lookback", 21))),
             volatility_floor=max(1e-12, float(risk_section.get("volatility_floor", 0.005))),
             max_position_weight=max(1e-12, float(risk_section.get("max_position_weight", 1.0))),
+            benchmark_blend_enabled=bool(risk_section.get("benchmark_blend_enabled", False)),
+            benchmark_blend_default_alpha_exposure=_clamp_unit_interval(
+                risk_section.get("benchmark_blend_default_alpha_exposure", 1.0)
+            ),
+            benchmark_blend_regime_exposures={
+                str(name): _clamp_unit_interval(value)
+                for name, value in risk_section.get("benchmark_blend_regime_exposures", {}).items()
+            },
         ),
         rl=RLConfig(
             total_timesteps=int(rl_section.get("total_timesteps", 1000000)),
@@ -274,6 +285,11 @@ def _resolve_date_string(value: Any) -> str:
     if lowered in {"today", "now", "current", "latest"}:
         return date.today().isoformat()
     return text
+
+
+def _clamp_unit_interval(value: Any) -> float:
+    number = float(value)
+    return max(0.0, min(1.0, number))
 
 
 
