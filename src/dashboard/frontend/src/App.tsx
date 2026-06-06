@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import {
   Area,
   AreaChart,
@@ -622,7 +623,7 @@ function SectionHeader({
   icon: typeof Activity;
   title: string;
   description: string;
-  action?: React.ReactNode;
+  action?: ReactNode;
 }) {
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -640,7 +641,7 @@ function SectionHeader({
   );
 }
 
-function Card({ children }: { children: React.ReactNode }) {
+function Card({ children }: { children: ReactNode }) {
   return (
     <article className="rounded-[28px] border border-white/80 bg-white p-5 shadow-[0_18px_70px_rgba(15,23,42,0.07)] sm:p-6">
       {children}
@@ -652,7 +653,7 @@ function StatusPill({
   children,
   tone,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
   tone: 'success' | 'warning' | 'neutral';
 }) {
   const classes = {
