@@ -6,14 +6,25 @@ This document is the short version of the project results. It is based on the sa
 
 Selected signal: `regime_portfolio_selector`
 
+Portfolio layer: regime-aware alpha/SPY blend
+
 | Series | Annual Return | Sharpe | Sortino | Calmar | Max Drawdown | Total Return |
 |---|---:|---:|---:|---:|---:|---:|
-| AMRF Strategy | 17.32% | 0.9366 | 0.8907 | 0.6979 | -24.82% | 16.44x |
-| SPY | 13.34% | 0.8742 | 0.8225 | 0.3956 | -33.73% | 8.41x |
-| Equal Weight | 11.75% | 0.7421 | 0.7066 | 0.2389 | -49.19% | 6.30x |
-| 63D Momentum | 8.11% | 0.6023 | 0.5620 | 0.2675 | -30.31% | 3.04x |
+| AMRF Strategy | 16.35% | 1.0866 | 1.0412 | 0.7887 | -20.73% | 17.61x |
+| SPY | 14.53% | 0.9500 | 0.8966 | 0.4660 | -31.18% | 12.72x |
+| Equal Weight | 13.94% | 0.8549 | 0.8149 | 0.2814 | -49.54% | 11.42x |
+| 63D Momentum | 9.87% | 0.7036 | 0.6705 | 0.3534 | -27.93% | 5.15x |
 
-The selected AMRF strategy beats SPY by `0.0624` Sharpe on the full backtest window.
+The selected AMRF portfolio beats SPY by `0.1366` Sharpe on the full backtest window.
+
+Allocation policy:
+
+| Regime | Alpha Sleeve | SPY Sleeve |
+|---|---:|---:|
+| 0 | 0% | 100% |
+| 1 | 25% | 75% |
+| 2 | 25% | 75% |
+| 3 | 75% | 25% |
 
 ## Regime-Conditional Performance
 
@@ -21,10 +32,10 @@ From `data/results/regime_performance.parquet`.
 
 | Regime | Annual Return | Sharpe | Sortino | Calmar | Max Drawdown | Total Return | n_days |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Bull Trending (0) | 31.44% | 1.3825 | 1.2407 | 2.6622 | -11.81% | 0.58x | 421 |
-| Low-Vol Compression (1) | 20.49% | 1.2135 | 1.1508 | 1.4612 | -14.02% | 2.10x | 1530 |
-| Bear Trending (2) | 16.19% | 0.8388 | 0.7874 | 0.6556 | -24.69% | 1.19x | 1313 |
-| High-Vol Crisis (3) | 10.40% | 0.6056 | 0.5959 | 0.4189 | -24.82% | 0.63x | 1245 |
+| Bull Trending (0) | 45.48% | 2.3154 | 2.1806 | 4.7289 | -9.62% | 0.68x | 347 |
+| Low-Vol Compression (1) | 14.37% | 1.0953 | 1.0357 | 0.9338 | -15.39% | 1.66x | 1839 |
+| Bear Trending (2) | 14.60% | 0.9605 | 0.9198 | 0.7943 | -18.39% | 0.81x | 1095 |
+| High-Vol Crisis (3) | 14.21% | 0.8992 | 0.8724 | 0.8660 | -16.41% | 1.31x | 1584 |
 
 Selected-signal diagnostics from `data/processed/alpha_diagnostics_by_regime.parquet`:
 
@@ -55,7 +66,6 @@ From `data/results/stress_report.parquet`.
 
 | Scenario | Period Return | Max Drawdown | Volatility | n_days | Status |
 |---|---:|---:|---:|---:|---|
-| GFC | -0.51% | -10.30% | 19.89% | 146 | ok |
-| COVID | -7.00% | -14.13% | 28.69% | 24 | ok |
-| Rate Hike | -13.37% | -23.30% | 19.80% | 251 | ok |
-
+| GFC | 0.82% | -11.10% | 20.09% | 146 | ok |
+| COVID | -15.32% | -16.22% | 19.45% | 24 | ok |
+| Rate Hike | -17.50% | -20.29% | 21.93% | 251 | ok |
